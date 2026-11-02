@@ -171,7 +171,41 @@ app.get('/api/servers/:id/files', requireAuth, (req, res) => {
 app.get('/api/servers/:id/file', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; try { const p = safeFile(s, req.query.path); if (!fs.statSync(p).isFile()) return res.status(400).json({ error: 'Not a file' }); if (fs.statSync(p).size > 1024 * 1024) return res.status(413).json({ error: 'Files over 1 MB cannot be edited in the panel' }); res.json({ content: fs.readFileSync(p, 'utf8') }); } catch(e) { res.status(400).json({ error: e.message }); } });
 app.put('/api/servers/:id/file', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; const { path: rel, content } = req.body || {}; if (typeof content !== 'string' || Buffer.byteLength(content) > 1024 * 1024) return res.status(400).json({ error: 'Text files are limited to 1 MB' }); try { const p = safeFile(s, rel); if (fs.existsSync(p) && !fs.statSync(p).isFile()) return res.status(400).json({ error: 'Not a file' }); fs.writeFileSync(p, content, { mode: 0o600 }); res.json({ ok: true }); } catch(e) { res.status(400).json({ error: e.message }); } });
 app.delete('/api/servers/:id/file', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; try { const p = safeFile(s, req.body?.path); if (p === serverDir(s)) return res.status(400).json({ error: 'Cannot remove server root' }); fs.rmSync(p, { recursive: true, force: false }); res.json({ ok: true }); } catch(e) { res.status(400).json({ error: e.message }); } });
-app.post('/api/servers/:id/upload', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; let name = req.get('x-file-name'); let uploadPath = req.get('x-file-path') || ''; try { name = decodeURIComponent(name || ''); uploadPath = decodeURIComponent(uploadPath); if (!name || name.includes('/') || name.includes('\\') || name.startsWith('.')) throw new Error('Invalid filename'); const p = safeFile(s, [uploadPath, name].filter(Boolean).join('/')); fs.mkdirSync(path.dirname(p), { recursive: true }); const out = fs.createWriteStream(p, { flags: 'w', mode: 0o600 }); let size = 0; req.on('data', b => { size += b.length; if (size > 64 * 1024 * 1024) req.destroy(new Error('Upload exceeds 64 MB')); }); req.pipe(out); out.on('finish', () => res.json({ ok: true, size })); out.on('error', e => { if (!res.headersSent) res.status(400).json({ error: e.message }); }); } catch(e) { res.status(400).json({ error: e.message }); } });
+app.post('/api/servers/:id/upload', requireAuth, async (req, res) => {
+  const s = getServer(req.params.id, res);
+  if (!s) return;
+  const MAX_UPLOAD = 64 * 1024 * 1024;
+  let temporary = null;
+  try {
+    const name = decodeURIComponent(req.get('x-file-name') || '');
+    const uploadPath = decodeURIComponent(req.get('x-file-path') || '');
+    if (!name || name.length > 255 || name === '.' || name === '..' || name.startsWith('.') || /[\\\\/\\x00-\\x1f\\x7f]/.test(name)) {
+      return res.status(400).json({ error: 'Invalid filename. Hidden files and path separators are not allowed.' });
+    }
+    const declaredLength = Number(req.get('content-length') || 0);
+    if (declaredLength > MAX_UPLOAD) return res.status(413).json({ error: 'Upload exceeds the 64 MB limit.' });
+    const target = safeFile(s, [uploadPath, name].filter(Boolean).join('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+    temporary = path.join(path.dirname(target), `.upload-${crypto.randomBytes(12).toString('hex')}.tmp`);
+    let size = 0;
+    const limiter = new (require('stream').Transform)({
+      transform(chunk, encoding, callback) {
+        size += chunk.length;
+        if (size > MAX_UPLOAD) return callback(new Error('Upload exceeds the 64 MB limit.'));
+        callback(null, chunk);
+      }
+    });
+    await require('stream/promises').pipeline(req, limiter, fs.createWriteStream(temporary, { flags: 'wx', mode: 0o600 }));
+    fs.renameSync(temporary, target);
+    temporary = null;
+    return res.status(201).json({ ok: true, size, filename: name });
+  } catch (error) {
+    if (temporary) { try { fs.rmSync(temporary, { force: true }); } catch {} }
+    if (res.headersSent || res.destroyed) return;
+    const status = /64 MB limit/.test(error.message) ? 413 : 400;
+    return res.status(status).json({ error: error.message || 'Upload failed.' });
+  }
+});
 app.get('/api/servers/:id/download', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; try { const p = safeFile(s, req.query.path); if (!fs.statSync(p).isFile()) return res.status(400).json({ error: 'Not a file' }); res.download(p, path.basename(p)); } catch(e) { res.status(400).json({ error: e.message }); } });
 function directorySize(dir) { let size = 0; for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir,e.name); if (e.isSymbolicLink()) continue; size += e.isDirectory() ? directorySize(p) : fs.statSync(p).size; } return size; }
 app.get('/api/servers/:id/backups', requireAuth, (req,res) => { const s = getServer(req.params.id,res); if (s) res.json(db.prepare('SELECT id,label,size,created_at AS createdAt FROM backups WHERE server_id=? ORDER BY id DESC').all(s.id)); });
