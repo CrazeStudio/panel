@@ -400,24 +400,23 @@ app.post('/api/java/install', requireAdmin, async (req,res)=>{
   await new Promise((resolve,reject)=>{const p=spawn('tar',['-xzf',archive,'-C',stage,'--strip-components=1','--no-same-owner','--no-same-permissions'],{stdio:'ignore'});p.on('error',reject);p.on('close',code=>code===0?resolve():reject(new Error('Could not extract Java runtime.')))});
   const executable=path.join(stage,'bin','java');
   if(!fs.existsSync(executable)||!fs.statSync(executable).isFile())throw new Error('Downloaded archive does not contain Java.');
-  fs.chmodSync(executable,0o700);fs.renameSync(stage,JAVA_HOME_DIR);fs.writeFileSync(JAVA_BIN_FILE,path.join(JAVA_HOME_DIR,'bin','java'),{mode:0o600});
+  fs.chmodSync(executable,0o700);
+  await new Promise((resolve,reject)=>{const check=spawn(executable,['-version'],{stdio:['ignore','ignore','pipe']});let output='';check.stderr.on('data',c=>{if(output.length<2048)output+=c.toString()});check.on('error',reject);check.on('close',code=>code===0&&/version/.test(output)?resolve():reject(new Error('The downloaded Java runtime failed its version check.')))});fs.renameSync(stage,JAVA_HOME_DIR);fs.writeFileSync(JAVA_BIN_FILE,path.join(JAVA_HOME_DIR,'bin','java'),{mode:0o600});
   return res.json({ok:true,version,executable:path.join(JAVA_HOME_DIR,'bin','java')});
  }catch(error){fs.rmSync(stage,{recursive:true,force:true});return res.status(502).json({error:error.message||'Java installation failed.'})}
  finally{fs.rmSync(archive,{force:true})}
 });
 
 app.get('/api/java/status', requireAuth, (_req, res) => {
-  const child = spawn(configuredJava(), ['-version'], { stdio: ['ignore','pipe','pipe'] });
-  let output = '';
-  child.stdout.on('data', c => output += c.toString());
-  child.stderr.on('data', c => output += c.toString());
-  child.on('error', () => res.json({ installed: false, version: null }));
-  child.on('close', code => {
-    const match = output.match(/version "([^"]+)"/);
-    res.json({ installed: code === 0, version: match?.[1] || null, executable: process.env.JAVA_BIN || 'java' });
-  });
+  const executable=configuredJava(),child=spawn(executable,['-version'],{stdio:['ignore','pipe','pipe']});
+  let output='',sent=false;
+  const finish=payload=>{if(sent)return;sent=true;res.json(payload)};
+  child.stdout.on('data',c=>{if(output.length<4096)output+=c.toString()});
+  child.stderr.on('data',c=>{if(output.length<4096)output+=c.toString()});
+  child.on('error',()=>finish({installed:false,version:null,executable}));
+  child.on('close',code=>{const match=output.match(/version "([^"]+)"/);finish({installed:code===0,version:match?.[1]||null,executable})});
 });
-app.post('/api/servers/:id/install-paper', requireAuth, async (req, res) => {
+app.post('/api/servers/:id/install-paper', requireAdmin, async (req, res) => {
   const server = getServer(req.params.id, res);
   if (!server) return;
   if (processes.get(server.id)?.child.exitCode === null) return res.status(409).json({ error: 'Stop the server before installing server software.' });
