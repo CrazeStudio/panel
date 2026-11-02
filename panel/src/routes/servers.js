@@ -119,7 +119,7 @@ function createServersRouter(db) {
   router.get('/:id/users', requireAdmin, (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
-    const users = db.prepare('SELECT id, username, email, role, disabled FROM users ORDER BY username').all();
+    const users = db.prepare('SELECT id, username, email, role, disabled FROM users WHERE id != ? ORDER BY username').all(server.owner_id);
     const assignments = db.prepare('SELECT user_id, permission FROM server_users WHERE server_id = ?').all(server.id);
     res.json({ users, assignments });
   });
