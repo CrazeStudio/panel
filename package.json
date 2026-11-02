@@ -6,9 +6,11 @@
   "workspaces": ["panel", "agent"],
   "engines": { "node": ">=22 <25" },
   "scripts": {
-    "start": "npm run start --workspace @crazepanel/panel",
-    "start:agent": "npm run start --workspace @crazepanel/agent",
-    "dev": "npm run dev --workspace @crazepanel/panel",
-    "test": "node --test tests/*.test.js"
+    "start": "node panel/src/index.js",
+    "start:agent": "node agent/src/index.js",
+    "dev": "node --watch panel/src/index.js",
+    "dev:agent": "node --watch agent/src/index.js",
+    "test": "node --test tests/*.test.js",
+    "check": "node --check panel/src/index.js && node --check agent/src/index.js"
   }
 }
