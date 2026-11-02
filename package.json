@@ -1,25 +1,14 @@
 {
-  "name": "blockpanel",
-  "version": "1.0.0",
+  "name": "crazepanel",
+  "version": "2.0.0",
   "private": true,
-  "description": "Self-hosted Minecraft Java server management panel",
-  "main": "src/index.js",
+  "description": "Self-hosted game server management panel and node agent",
+  "workspaces": ["panel", "agent"],
+  "engines": { "node": ">=22 <25" },
   "scripts": {
-    "start": "node src/index.js"
-  },
-  "engines": {
-    "node": ">=22 <25"
-  },
-  "dependencies": {
-    "better-sqlite3": "13.0.3",
-    "bcryptjs": "^2.4.3",
-    "express": "^4.21.2",
-    "express-session": "^1.18.1",
-    "connect-sqlite3": "^0.9.15",
-    "helmet": "^8.0.0",
-    "node-gyp": "^12.3.0"
-  },
-  "overrides": {
-    "node-gyp": "^12.3.0"
+    "start": "npm run start --workspace @crazepanel/panel",
+    "start:agent": "npm run start --workspace @crazepanel/agent",
+    "dev": "npm run dev --workspace @crazepanel/panel",
+    "test": "node --test tests/*.test.js"
   }
 }

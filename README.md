@@ -1,63 +1,226 @@
-# BlockPanel
+# CrazePanel 2
 
-A self-hosted control panel for local Minecraft Java Edition server processes. Node.js and SQLite power the panel; Java runs each configured server jar in its own managed directory.
+CrazePanel is a self-hosted Minecraft server control panel built with Node.js. It is split into a web panel and a node agent. The panel stores accounts and server metadata; the agent runs on each host and performs Docker operations against that host's Docker Engine.
+
+This repository follows the Node.js / Express / Dockerode architecture used by the earlier Skyport panel/daemon model. It does not copy Skyport source code or branding.
+
+## What is included
+
+- First-run administrator setup; bcrypt password hashes; SQLite-backed sessions; CSRF protection; login rate limiting.
+- Multiple nodes with generated, one-time agent tokens encrypted at rest in the panel database.
+- Docker-managed Minecraft Java servers: Paper, Purpur, Vanilla, Fabric, Forge and NeoForge; plus Bedrock Dedicated Server.
+- Start, stop, restart and kill actions; live process state and Docker resource metrics.
+- Console logs and command input using the attached container stream.
+- Per-server file listing, text editing, upload, create-folder and delete with path traversal and symlink checks.
+- Full server directory backups and restore while the server is stopped.
+- Resource limit updates, panel user administration and administrator audit log.
+- Responsive browser UI and a session-authenticated JSON API.
+- Installer scripts, systemd service units, Dockerfiles, Docker Compose and automated tests.
+
+## Architecture
+
+```text
+CrazePanel/
+├── panel/
+│   ├── public/             # Browser UI
+│   └── src/
+│       ├── routes/         # Auth, nodes, servers, admin
+│       ├── lib/            # Agent client, encryption, audit, eggs
+│       ├── middleware/
+│       ├── config.js
+│       ├── db.js
+│       └── index.js
+├── agent/
+│   └── src/
+│       ├── docker.js       # Docker Engine integration
+│       ├── paths.js        # Safe host file paths
+│       └── index.js        # Node API
+├── eggs/index.json
+├── scripts/
+├── tests/
+├── docker-compose.yml
+└── package.json
+```
+
+### Runtime boundary
+
+The panel does not start game processes on the web server. A node agent must run on each host with Docker Engine and access to that host's Docker socket. The panel calls the agent using a unique bearer token for the node. The agent exposes the CrazePanel server API and validates every request.
 
 ## Requirements
 
-- Node.js 22 LTS (recommended; Node.js 22–24 supported)
-- npm 10 or newer (the project pins `node-gyp` 12 for modern Python compatibility)
-- Java installed on the host, or a supported Linux host for the panel-managed Temurin runtime installer
-- `tar` available on Linux when using automatic Java installation
-- A Minecraft Java server jar, such as Paper or the official server jar
+- Node.js 22 LTS (Node.js 22–24 supported).
+- Docker Engine on every machine that will host game servers.
+- Ubuntu 22.04/24.04 or Debian 12/13 recommended for production nodes.
+- A reverse proxy with HTTPS for public panel access.
+- A reachable IP address or DNS name for each node agent.
 
-## Run
+## Manual panel installation
 
-```sh
+```bash
+git clone https://github.com/CrazeStudio/panel.git
+cd panel
+cp .env.example .env
+```
+
+Generate the panel encryption key and session secret:
+
+```bash
+openssl rand -hex 32
+openssl rand -base64 48
+```
+
+Put the 64-character hex value in `PANEL_APP_KEY` and the second value in `SESSION_SECRET` inside `.env`. Generate a separate 64-character agent token for a single-node Compose setup:
+
+```bash
+openssl rand -hex 32
+```
+
+Set it as `NODE_TOKEN` in `.env`. For local HTTP testing, set `COOKIE_SECURE=false`. For public HTTPS deployments, keep `COOKIE_SECURE=true` and configure the proxy to forward the HTTPS scheme.
+
+Install and start:
+
+```bash
 nvm install 22
 nvm use 22
 npm install
 npm start
 ```
 
-Open `http://localhost:3000` and create the first admin account. Use a password with at least 12 characters. The panel creates `data/panel.sqlite`, `data/sessions.sqlite`, and one `data/servers/server-<id>/` directory for each instance.
+Open `http://localhost:3000`. The first-run screen creates the initial administrator. There are no hardcoded demo credentials.
 
-If Java is not on `PATH`, install a panel-managed Temurin JRE from **Admin → Java runtime** (Linux x64/ARM64), or set its executable before starting the panel:
+## Install a node agent
 
-```sh
-JAVA_BIN=/path/to/java npm start
+Install Docker Engine and Node.js 22 first. Then clone the repository onto the host that will run game containers:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git tar ca-certificates
+git clone https://github.com/CrazeStudio/panel.git /opt/crazepanel
+cd /opt/crazepanel
+npm install
+sudo mkdir -p /etc/crazepanel /var/lib/crazepanel/servers /var/lib/crazepanel/backups
+sudo chmod 700 /etc/crazepanel /var/lib/crazepanel
 ```
 
-Set `PORT` to change the web port. `DATA_DIR` changes where the database, session store, session secret, and server directories are kept. When deploying behind HTTPS, set `NODE_ENV=production`; configure the reverse proxy to forward the original protocol and restrict access to the panel.
+Create a node in **Administration → Nodes** in the panel. Copy its one-time token. Create `/etc/crazepanel/agent.env`:
 
-## Native SQLite build troubleshooting
+```bash
+sudo tee /etc/crazepanel/agent.env >/dev/null <<'EOF'
+NODE_TOKEN=PASTE_THE_NODE_TOKEN_HERE
+AGENT_HOST=0.0.0.0
+AGENT_PORT=8080
+DOCKER_SOCKET=/var/run/docker.sock
+SERVER_DATA_ROOT=/var/lib/crazepanel/servers
+BACKUP_ROOT=/var/lib/crazepanel/backups
+EGGS_FILE=/opt/crazepanel/eggs/index.json
+EOF
+sudo chmod 600 /etc/crazepanel/agent.env
+```
 
-The panel uses `better-sqlite3`, a native Node.js module. The project pins `better-sqlite3` 13.0.3 and `node-gyp` 12.x so installation does not rely on the obsolete `node-gyp` 8 toolchain. `node-gyp` 10 or newer is required when using Python 3.12 or later. If your environment still selects an old global Python/build tool, run `npm install` again after switching to Node.js 22 and ensure the project-local `node-gyp` is installed. Do not downgrade Python as the primary fix.
+Copy `scripts/crazepanel-agent.service` to `/etc/systemd/system/crazepanel-agent.service`, then run:
 
-## Add a server
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now crazepanel-agent
+sudo systemctl status crazepanel-agent
+```
 
-1. In the panel, choose **Add server** and set its jar filename, memory range, and game port.
-2. Copy the corresponding Minecraft server jar into the generated server directory shown in the instance details. The default filename is `server.jar`.
-3. Start the instance. On its first launch, accept Mojang's EULA by editing that instance's `eula.txt` and setting `eula=true`, then start it again.
-4. Allow the selected game port through the host firewall if players will connect over the network.
+Use the externally reachable agent URL (for example `https://node1.example.com:8080`) in the panel node record. Do not expose port 8080 to the public internet without TLS and network restrictions. Restrict it to the panel's source IP or a private VPN where possible.
 
-Each Java process receives only the panel's fixed memory arguments and the configured jar path; arbitrary shell commands are not used. The console sends commands to the Minecraft process stdin. The panel stores the most recent 500 console lines per instance.
+The included `scripts/install-agent.sh` automates the agent setup after Docker and Node.js are installed. It asks for the one-time token generated by the panel.
 
-## Security and operations
+## Install panel as a systemd service
 
-- The first account is the initial administrator. Administrators can create panel users, assign user/admin roles, and remove accounts from **Admin → Panel users**. Users can update their own password in **User settings**. Standard users can access and operate the configured server instances; only administrators can create, edit, delete, install server software, manage panel users, or install Java. Existing sessions created before the role update should sign out and sign in again.
-- Keep the panel on a trusted network or put it behind HTTPS and an access controlled reverse proxy before exposing it publicly.
-- Back up the full `data/` directory while the panel is stopped to preserve settings, credentials, sessions, and server files.
-- Deleting an instance removes its database entry and console history. It intentionally leaves the server directory on disk.
-- The panel manages local Java processes and reports their state only while it is running. A Java server already running before the panel starts is not reattached automatically.
+On a Linux host with Node.js 22 already installed:
 
-## Panel features
+```bash
+sudo bash scripts/install-panel.sh
+```
 
-- Secure first-admin setup, sign-in, CSRF protection, and SQLite-backed sessions
-- Multiple managed Java instances with start, graceful stop, restart, memory and port settings
-- Separate server workspaces, administrator/user navigation, role-protected server creation and panel user management
-- Built-in Paper, Purpur and official Vanilla server installers; Java runtime detection and a Linux Temurin JRE installer
-- Live process console with command input and bounded console history
-- Per-instance file browser with upload (64 MB maximum), download, delete, and text editing (1 MB maximum)
-- Local per-instance filesystem backups, with restore available only while the instance is stopped
+The script creates a locked-down service account, generates local application secrets if they do not already exist, installs Node dependencies, and enables `crazepanel-panel.service`. Put Nginx or Caddy in front of the panel for TLS.
 
-Backups are full directory copies stored under `data/backups/`; they can use substantial disk space. Stop a server before creating a snapshot for a consistent world save. File management intentionally hides dotfiles and blocks symbolic links and parent-directory traversal.
+## Quick Docker Compose setup
+
+The included compose file runs the panel and a node agent on one Docker host.
+
+1. Generate `PANEL_APP_KEY`, `SESSION_SECRET`, and `NODE_TOKEN` with the commands above and add them to `.env`.
+2. Set `COOKIE_SECURE=false` only for local testing without HTTPS.
+3. Start the services:
+
+```bash
+docker compose up -d --build
+```
+
+4. Complete first-run admin setup at `http://localhost:3000`.
+5. Add a node using URL `http://agent:8080` and paste the same `NODE_TOKEN` configured in `.env`.
+
+**Docker socket warning:** access to `/var/run/docker.sock` effectively grants host-level control. Keep the agent on a trusted server, protect its token, firewall the agent port, and do not expose the Docker socket. The current server image catalogue is allow-listed in `eggs/index.json`; this build does not accept arbitrary client-supplied Docker images.
+
+## Panel API
+
+All panel API writes require the signed-in session and the `X-CSRF-Token` returned by `GET /api/auth/me` or the login/setup response.
+
+- `GET /api/health`
+- `GET /api/auth/setup-status`
+- `POST /api/auth/setup`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
+- `GET|POST /api/nodes`
+- `POST|DELETE /api/nodes/:id/test` (test is POST; deletion is DELETE)
+- `GET|POST /api/servers`
+- `GET|PATCH|DELETE /api/servers/:id`
+- `POST /api/servers/:id/power/:action`
+- `GET|POST /api/servers/:id/console`
+- `GET /api/servers/:id/files`
+- `GET|PUT /api/servers/:id/file`
+- `POST /api/servers/:id/files`
+- `DELETE /api/servers/:id/file`
+- `GET|POST /api/servers/:id/backups`
+- `POST /api/servers/:id/backups/restore`
+- `GET|POST|PATCH|DELETE /api/admin/users` (individual user paths for update/delete)
+- `GET /api/admin/audit`
+
+## Node API
+
+All node-agent endpoints require `Authorization: Bearer NODE_TOKEN`.
+
+- `GET /api/health`
+- `GET /api/servers`
+- `POST /api/servers`
+- `GET /api/servers/:id`
+- `POST /api/servers/:id/power/:action`
+- `PATCH /api/servers/:id/resources`
+- `GET|POST /api/servers/:id/console`
+- `GET /api/servers/:id/files`
+- `GET|PUT /api/servers/:id/file`
+- `POST /api/servers/:id/files`
+- `DELETE /api/servers/:id/file`
+- `GET|POST /api/servers/:id/backups`
+- `POST /api/servers/:id/backups/restore`
+- `DELETE /api/servers/:id`
+
+## Tests and checks
+
+```bash
+npm test
+node --check panel/src/index.js
+node --check agent/src/index.js
+```
+
+Automated tests cover path traversal protections, the egg catalogue and node URL validation. A real container lifecycle test requires a Linux host with a running Docker Engine and a configured agent node.
+
+## Scope and limitations
+
+- The panel and node agent must be reachable from one another. An offline node cannot execute power, console, file or backup operations.
+- The browser displays state and metrics returned by Docker through the agent; it does not invent online or CPU values.
+- The current build targets Minecraft Java and Bedrock. More supported games can be added to the allow-listed egg catalogue and agent provisioning logic.
+- Console input depends on interactive stdin support in the selected container image.
+- File editor limit is 2 MB; file upload limit is 64 MB. Hidden files and symbolic links are blocked by the agent file API.
+- Full backups use host disk space. Backups should be copied to off-node storage for disaster recovery.
+- Deleting a server removes the Docker container and panel record. Its host data directory is retained; remove it manually only after verifying you no longer need the data.
+- This is the first rebuilt baseline, not a claim of feature parity with mature commercial hosting panels. Advanced scheduling, file download/rename, SFTP, allocations, multi-factor authentication, automated off-site backups and billing are not included in this build.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

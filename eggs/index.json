@@ -1,0 +1,65 @@
+{
+  "paper": {
+    "name": "Paper",
+    "description": "High-performance Minecraft Java server with a plugin ecosystem.",
+    "category": "Minecraft Java",
+    "image": "itzg/minecraft-server:java21",
+    "type": "PAPER",
+    "containerPort": "25565/tcp",
+    "defaultPort": 25565
+  },
+  "purpur": {
+    "name": "Purpur",
+    "description": "Paper-based server with additional gameplay and configuration options.",
+    "category": "Minecraft Java",
+    "image": "itzg/minecraft-server:java21",
+    "type": "PURPUR",
+    "containerPort": "25565/tcp",
+    "defaultPort": 25565
+  },
+  "vanilla": {
+    "name": "Vanilla",
+    "description": "Official Minecraft Java server software.",
+    "category": "Minecraft Java",
+    "image": "itzg/minecraft-server:java21",
+    "type": "VANILLA",
+    "containerPort": "25565/tcp",
+    "defaultPort": 25565
+  },
+  "fabric": {
+    "name": "Fabric",
+    "description": "Lightweight mod loader for Minecraft Java.",
+    "category": "Minecraft Java",
+    "image": "itzg/minecraft-server:java21",
+    "type": "FABRIC",
+    "containerPort": "25565/tcp",
+    "defaultPort": 25565
+  },
+  "forge": {
+    "name": "Forge",
+    "description": "Forge mod loader for Minecraft Java.",
+    "category": "Minecraft Java",
+    "image": "itzg/minecraft-server:java21",
+    "type": "FORGE",
+    "containerPort": "25565/tcp",
+    "defaultPort": 25565
+  },
+  "neoforge": {
+    "name": "NeoForge",
+    "description": "NeoForge mod loader for Minecraft Java.",
+    "category": "Minecraft Java",
+    "image": "itzg/minecraft-server:java21",
+    "type": "NEOFORGE",
+    "containerPort": "25565/tcp",
+    "defaultPort": 25565
+  },
+  "bedrock": {
+    "name": "Bedrock Dedicated Server",
+    "description": "Minecraft Bedrock server for mobile, console and Windows players.",
+    "category": "Minecraft Bedrock",
+    "image": "itzg/minecraft-bedrock-server:latest",
+    "type": "BEDROCK",
+    "containerPort": "19132/udp",
+    "defaultPort": 19132
+  }
+}

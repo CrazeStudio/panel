@@ -1,0 +1,37 @@
+services:
+  panel:
+    build:
+      context: .
+      dockerfile: panel/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      DATA_DIR: /app/data
+      TRUST_PROXY: "1"
+      COOKIE_SECURE: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_TOKEN: ${NODE_TOKEN:?Set NODE_TOKEN in .env before starting the agent}
+      AGENT_PORT: 8080
+      AGENT_HOST: 0.0.0.0
+      SERVER_DATA_ROOT: /var/lib/crazepanel/servers
+      BACKUP_ROOT: /var/lib/crazepanel/backups
+      DOCKER_SOCKET: /var/run/docker.sock
+      EGGS_FILE: /app/eggs/index.json
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./agent-data:/var/lib/crazepanel

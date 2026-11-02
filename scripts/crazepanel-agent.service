@@ -1,0 +1,21 @@
+[Unit]
+Description=CrazePanel Node Agent
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/crazepanel
+EnvironmentFile=/etc/crazepanel/agent.env
+ExecStart=/usr/bin/node /opt/crazepanel/agent/src/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/crazepanel
+
+[Install]
+WantedBy=multi-user.target
