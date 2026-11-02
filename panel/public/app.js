@@ -432,9 +432,9 @@
       <div class="page-heading">
         <div><div class="kicker">LIVE CONTAINER STATE</div><div>${statusBadge(state.live?.status || server.status)}</div></div>
         <div class="heading-actions">
-          <button class="btn primary" data-power="start" ${state.live?.status === 'running' ? 'disabled' : ''}>Start</button>
-          <button class="btn" data-power="restart" ${state.live?.status !== 'running' ? 'disabled' : ''}>Restart</button>
-          <button class="btn danger" data-power="stop" ${state.live?.status !== 'running' ? 'disabled' : ''}>Stop</button>
+          <button class="btn primary" data-power="start" ${!server.canOperate || state.live?.status === 'running' ? 'disabled' : ''}>Start</button>
+          <button class="btn" data-power="restart" ${!server.canOperate || state.live?.status !== 'running' ? 'disabled' : ''}>Restart</button>
+          <button class="btn danger" data-power="stop" ${!server.canOperate || state.live?.status !== 'running' ? 'disabled' : ''}>Stop</button>
         </div>
       </div>
       <section class="resource-grid">
@@ -458,7 +458,8 @@
           <div class="file-row"><span>Started at</span><span class="mono">${esc(dateText(state.live?.startedAt))}</span></div>
           <div class="file-row"><span>Node</span><span>${esc(state.nodes.find((node) => node.id === server.node_id)?.name || 'Registered node')}</span></div>
           <div class="file-row"><span>Last update</span><span class="mono">${esc(dateText(server.updated_at))}</span></div>
-          ${server.canManage && state.user.role === 'admin' ? '<div style="padding:13px"><button class="btn small" data-action="edit-resources">Adjust resource limits</button></div>' : ''}
+          ${server.canManage && state.user.role === 'admin' ? '<div style="padding:13px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn small" data-action="edit-resources">Adjust resource limits</button><button class="btn small" data-action="manage-access">Manage access</button></div>' : ''}
+          ${!server.canOperate ? '<div class="help" style="padding:13px">Read-only access: server controls, console commands and file changes are disabled.</div>' : ''}
         </section>
       </div>
     `;
@@ -471,8 +472,8 @@
         <div class="panel-head"><strong>Server console</strong><small>DOCKER ATTACH / LOG OUTPUT</small></div>
         <div class="console-output" id="console-output">${lines.length ? lines.map((line) => esc(line)).join('\n') : 'Waiting for console output…'}</div>
         <form class="console-form" id="command-form">
-          <input name="command" autocomplete="off" maxlength="500" placeholder="Enter a server command…" required>
-          <button class="btn primary" type="submit">Send command</button>
+          <input name="command" autocomplete="off" maxlength="500" placeholder="${state.server?.canOperate ? 'Enter a server command…' : 'Read-only access'}" required ${state.server?.canOperate ? '' : 'disabled'}>
+          <button class="btn primary" type="submit" ${state.server?.canOperate ? '' : 'disabled'}>Send command</button>
         </form>
       </section>
       <p class="help" style="margin-top:10px">Console output is read from Docker logs. Commands use the attached container stdin stream. Some server images may not support interactive stdin.</p>
@@ -487,9 +488,7 @@
         <div class="file-toolbar">
           <div class="breadcrumbs">/ ${parts.map((part, index) => `<button class="btn small ghost" data-file-path="${esc(parts.slice(0, index + 1).join('/'))}">${esc(part)}</button> /`).join(' ')}</div>
           <button class="btn small" data-action="file-up" ${state.filePath ? '' : 'disabled'}>↑ Up</button>
-          <button class="btn small" data-action="new-folder">＋ Folder</button>
-          <button class="btn small" data-action="new-file">＋ Text file</button>
-          <label class="btn small">Upload<input id="file-upload" type="file" hidden></label>
+          ${state.server?.canOperate ? '<button class="btn small" data-action="new-folder">＋ Folder</button><button class="btn small" data-action="new-file">＋ Text file</button><label class="btn small">Upload<input id="file-upload" type="file" hidden></label>' : ''}
           <button class="btn small" data-action="refresh-files">↻</button>
         </div>
         ${files.length ? files.map((file) => `
@@ -501,9 +500,8 @@
             </div>
             <span class="muted mono">${file.type === 'directory' ? 'Directory' : formatBytes(file.size)}</span>
             <div class="file-actions">
-              ${file.type === 'file' ? `<button class="btn small" data-file-open="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Edit</button><button class="btn small" data-file-download="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Download</button>` : ''}
-              <button class="btn small" data-file-rename="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Rename</button>
-              <button class="btn small danger" data-file-delete="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Delete</button>
+              ${file.type === 'file' ? `${state.server?.canOperate ? `<button class="btn small" data-file-open="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Edit</button>` : ''}<button class="btn small" data-file-download="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Download</button>` : ''}
+              ${state.server?.canOperate ? `<button class="btn small" data-file-rename="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Rename</button><button class="btn small danger" data-file-delete="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Delete</button>` : ''}
             </div>
           </div>
         `).join('') : emptyState('This directory is empty', 'Upload a file or create a folder to get started.')}
@@ -539,7 +537,7 @@
     return `
       <div class="page-heading">
         <div><div class="kicker">RESTORE POINTS</div><p>Full server-directory archives stored on the node host.</p></div>
-        <div class="heading-actions"><button class="btn primary" data-action="create-backup">＋ Create backup</button></div>
+        <div class="heading-actions">${state.server?.canOperate ? '<button class="btn primary" data-action="create-backup">＋ Create backup</button>' : ''}</div>
       </div>
       <section class="panel">
         <div class="panel-head"><strong>Available backups</strong><small>BACKUP STORAGE</small></div>
@@ -547,7 +545,7 @@
           <div class="file-row">
             <span class="server-name">${esc(backup.name)}<span class="subline">${esc(dateText(backup.createdAt))}</span></span>
             <span class="mono muted">${formatBytes(backup.size)}</span>
-            <div class="file-actions"><button class="btn small danger" data-backup-restore="${esc(backup.name)}">Restore</button></div>
+            <div class="file-actions">${state.server?.canOperate ? `<button class="btn small danger" data-backup-restore="${esc(backup.name)}">Restore</button>` : ''}</div>
           </div>
         `).join('') : emptyState('No backups yet', 'Create a restore point before installing plugins or changing server configuration.')}
       </section>
@@ -657,6 +655,20 @@
     `);
   }
 
+  async function manageAccessModal() {
+    const result = await api(`/servers/${state.serverId}/users`);
+    const candidates = (result.users || []).filter((user) => user.id !== state.server?.owner_id && !user.disabled);
+    const names = new Map((result.users || []).map((user) => [user.id, user.username]));
+    const assigned = result.assignments || [];
+    openModal('Server access', `
+      <form class="form-stack" id="share-user-form" data-form="share-user">
+        <label class="field-label">Panel user<select name="userId" required>${candidates.map((user) => `<option value="${esc(user.id)}">${esc(user.username)} · ${esc(user.role)}</option>`).join('')}</select></label>
+        <label class="field-label">Permission<select name="permission"><option value="operator">Operator · can control and change files</option><option value="read">Read only · can view server data</option></select></label>
+      </form>
+      <div class="section-head"><div><h2>Assigned users</h2><p>Remove access at any time.</p></div></div>
+      ${assigned.map((item) => `<div class="file-row"><span>${esc(names.get(item.user_id) || item.user_id)}</span><span class="mono muted">${esc(item.permission)}</span><div class="file-actions"><button class="btn small danger" data-share-remove="${esc(item.user_id)}">Remove</button></div></div>`).join('') || '<p class="help">No additional users have access to this server.</p>'}
+    `, `<button class="btn" data-action="close-modal">Close</button><button class="btn primary" type="submit" form="share-user-form">Save access</button>`);
+  }
   async function newServerModal() {
     if (!state.nodes.length) {
       toast('Register and connect a node before creating a server.', true);
@@ -823,6 +835,12 @@ AGENT_PORT=8080</pre>
         await loadFiles();
         return;
       }
+      if (type === 'share-user') {
+        await api(`/servers/${state.serverId}/users`, { method: 'POST', body: values });
+        toast('Server access updated.');
+        await manageAccessModal();
+        return;
+      }
       if (type === 'edit-resources') {
         await api(`/servers/${state.serverId}`, {
           method: 'PATCH',
@@ -917,6 +935,10 @@ AGENT_PORT=8080</pre>
       }
       if (action === 'delete-server') {
         confirmModal('Delete this server?', 'This removes the Docker container and the panel record. The node data directory is not automatically erased.', 'delete-server');
+        return;
+      }
+      if (action === 'manage-access') {
+        await manageAccessModal();
         return;
       }
       if (action === 'edit-resources') {
@@ -1099,6 +1121,17 @@ AGENT_PORT=8080</pre>
       return;
     }
 
+    const shareRemove = event.target.closest('[data-share-remove]');
+    if (shareRemove) {
+      try {
+        await api(`/servers/${state.serverId}/users/${shareRemove.dataset.shareRemove}`, { method: 'DELETE' });
+        toast('Server access removed.');
+        await manageAccessModal();
+      } catch (error) {
+        toast(error.message, true);
+      }
+      return;
+    }
     const confirm = event.target.closest('[data-confirm-action]');
     if (confirm) {
       let payload = {};
