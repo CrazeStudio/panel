@@ -1,6 +1,6 @@
 const express = require('express');
 const crypto = require('node:crypto');
-const eggs = require('../../../eggs/index.json');
+const eggs = require('../lib/eggs');
 const { requireAdmin, asyncRoute } = require('../middleware/auth');
 const { agentRequest } = require('../lib/agent-client');
 const { audit } = require('../lib/audit');
@@ -47,6 +47,10 @@ function createServersRouter(db) {
     const memoryMb = Number(req.body?.memoryMb || 4096);
     const cpuCores = Number(req.body?.cpuCores || 2);
     const port = Number(req.body?.port || 25565);
+
+    if (req.body?.eulaAccepted !== true) {
+      return res.status(400).json({ error: 'Confirm that you agree to the Minecraft EULA before creating a server.' });
+    }
 
     if (!name || name.length > 48 || !eggs[eggId] || !nodeId) {
       return res.status(400).json({ error: 'Choose a server name, a supported egg and a node.' });
