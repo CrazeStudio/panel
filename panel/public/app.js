@@ -247,6 +247,7 @@
   }
 
   function renderOverview() {
+    const admin = state.user.role === 'admin';
     const online = state.servers.filter((server) => server.status === 'running').length;
     const offline = state.servers.filter((server) => server.status === 'node-offline').length;
     const cards = [
