@@ -29,8 +29,6 @@ services:
       BACKUP_ROOT: /var/lib/crazepanel/backups
       DOCKER_SOCKET: /var/run/docker.sock
       EGGS_FILE: /app/eggs/index.json
-    ports:
-      - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${SERVER_DATA_ROOT_HOST:-/var/lib/crazepanel}:/var/lib/crazepanel
