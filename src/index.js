@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE N
 CREATE TABLE IF NOT EXISTS servers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, directory TEXT NOT NULL UNIQUE, jar TEXT NOT NULL DEFAULT 'server.jar', min_memory INTEGER NOT NULL DEFAULT 1024, max_memory INTEGER NOT NULL DEFAULT 2048, port INTEGER NOT NULL DEFAULT 25565, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS console_lines (id INTEGER PRIMARY KEY, server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE, line TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS backups (id INTEGER PRIMARY KEY, server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE, label TEXT NOT NULL, directory TEXT NOT NULL UNIQUE, size INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin';
 `);
 
 const app = express();
@@ -56,6 +57,7 @@ function publicServer(s) {
   return { id: s.id, name: s.name, directory: s.directory, jar: s.jar, minMemory: s.min_memory, maxMemory: s.max_memory, port: s.port, status: p && p.child.exitCode === null ? 'online' : 'offline', pid: p && p.child.exitCode === null ? p.child.pid : null, players: p?.players || '—', startedAt: p?.startedAt || null };
 }
 function requireAuth(req, res, next) { if (!req.session.user) return res.status(401).json({ error: 'Sign in required' }); next(); }
+function requireAdmin(req,res,next){ if(!req.session.user) return res.status(401).json({error:'Sign in required'}); if(req.session.user.role!=='admin') return res.status(403).json({error:'Administrator permission required'}); next(); }
 function requireCsrf(req, res, next) {
   if (['GET', 'HEAD'].includes(req.method)) return next();
   if (!req.session.csrf || req.get('x-csrf-token') !== req.session.csrf) return res.status(403).json({ error: 'Invalid security token' });
@@ -71,19 +73,56 @@ app.post('/api/setup', async (req, res) => {
   const hash = await bcrypt.hash(password, 12);
   try { db.prepare('INSERT INTO users (username,password_hash) VALUES (?,?)').run(username, hash); }
   catch { return res.status(409).json({ error: 'That username is unavailable.' }); }
-  req.session.regenerate(err => { if (err) return res.status(500).json({ error: 'Could not create session' }); req.session.user = { username }; req.session.csrf = crypto.randomBytes(32).toString('hex'); res.json({ user: req.session.user, csrf: req.session.csrf }); });
+  req.session.regenerate(err => { if (err) return res.status(500).json({ error: 'Could not create session' }); req.session.user = { id: Number(db.prepare('SELECT id FROM users WHERE username=?').get(username).id), username, role: 'admin' }; req.session.csrf = crypto.randomBytes(32).toString('hex'); res.json({ user: req.session.user, csrf: req.session.csrf }); });
 });
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username || '');
   if (!user || typeof password !== 'string' || !(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ error: 'Incorrect username or password' });
-  req.session.regenerate(err => { if (err) return res.status(500).json({ error: 'Could not create session' }); req.session.user = { username: user.username }; req.session.csrf = crypto.randomBytes(32).toString('hex'); res.json({ user: req.session.user, csrf: req.session.csrf }); });
+  req.session.regenerate(err => { if (err) return res.status(500).json({ error: 'Could not create session' }); req.session.user = { id: user.id, username: user.username, role: user.role || 'admin' }; req.session.csrf = crypto.randomBytes(32).toString('hex'); res.json({ user: req.session.user, csrf: req.session.csrf }); });
 });
 app.get('/api/me', (req, res) => res.json({ user: req.session.user || null, csrf: req.session.csrf || null, setupNeeded: db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0 }));
 app.post('/api/logout', requireAuth, (req, res) => req.session.destroy(() => res.json({ ok: true })));
 
+
+app.get('/api/admin/users', requireAdmin, (_req,res)=>res.json(db.prepare('SELECT id,username,role,created_at FROM users ORDER BY id').all()));
+app.post('/api/admin/users', requireAdmin, async (req,res)=>{
+  const username=typeof req.body?.username==='string'?req.body.username.trim():'';
+  const password=req.body?.password;
+  const role=req.body?.role==='admin'?'admin':'user';
+  if(!/^[a-zA-Z0-9_-]{3,32}$/.test(username)||typeof password!=='string'||password.length<12||password.length>128) return res.status(400).json({error:'Use a 3–32 character username and a password of at least 12 characters.'});
+  try{const hash=await bcrypt.hash(password,12);const info=db.prepare('INSERT INTO users(username,password_hash,role) VALUES(?,?,?)').run(username,hash,role);return res.status(201).json(db.prepare('SELECT id,username,role,created_at FROM users WHERE id=?').get(info.lastInsertRowid));}
+  catch{return res.status(409).json({error:'That username is already in use.'});}
+});
+app.patch('/api/admin/users/:id', requireAdmin, (req,res)=>{
+ const id=Number(req.params.id),role=req.body?.role;
+ if(!Number.isSafeInteger(id)||!['admin','user'].includes(role)) return res.status(400).json({error:'Invalid user or role.'});
+ const target=db.prepare('SELECT id,role FROM users WHERE id=?').get(id);
+ if(!target)return res.status(404).json({error:'User not found.'});
+ if(target.role==='admin'&&role!=='admin'&&db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin'").get().n<=1)return res.status(409).json({error:'At least one administrator must remain.'});
+ db.prepare('UPDATE users SET role=? WHERE id=?').run(role,id);
+ return res.json({ok:true});
+});
+app.delete('/api/admin/users/:id', requireAdmin, (req,res)=>{
+ const id=Number(req.params.id);
+ if(!Number.isSafeInteger(id))return res.status(400).json({error:'Invalid user id.'});
+ if(id===req.session.user.id)return res.status(400).json({error:'You cannot delete your own account.'});
+ const target=db.prepare('SELECT id,role FROM users WHERE id=?').get(id);
+ if(!target)return res.status(404).json({error:'User not found.'});
+ if(target.role==='admin'&&db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin'").get().n<=1)return res.status(409).json({error:'At least one administrator must remain.'});
+ db.prepare('DELETE FROM users WHERE id=?').run(id);return res.json({ok:true});
+});
+app.post('/api/account/password', requireAuth, async (req,res)=>{
+ const current=req.body?.currentPassword,next=req.body?.newPassword;
+ if(typeof current!=='string'||typeof next!=='string'||next.length<12||next.length>128)return res.status(400).json({error:'New password must be 12–128 characters.'});
+ const user=db.prepare('SELECT id,password_hash FROM users WHERE id=?').get(req.session.user.id);
+ if(!user||!(await bcrypt.compare(current,user.password_hash)))return res.status(403).json({error:'Current password is incorrect.'});
+ const hash=await bcrypt.hash(next,12);db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hash,user.id);
+ return res.json({ok:true});
+});
+
 app.get('/api/servers', requireAuth, (_req, res) => res.json(db.prepare('SELECT * FROM servers ORDER BY id DESC').all().map(publicServer)));
-app.post('/api/servers', requireAuth, (req, res) => {
+app.post('/api/servers', requireAdmin, (req, res) => {
   let { name, jar = 'server.jar', minMemory = 1024, maxMemory = 2048, port = 25565 } = req.body || {};
   name = typeof name === 'string' ? name.trim() : ''; jar = typeof jar === 'string' ? jar.trim() : '';
   minMemory = Number(minMemory); maxMemory = Number(maxMemory); port = Number(port);
@@ -93,7 +132,7 @@ app.post('/api/servers', requireAuth, (req, res) => {
   const info = db.prepare('INSERT INTO servers (name,directory,jar,min_memory,max_memory,port) VALUES (?,?,?,?,?,?)').run(name, directory, jar, minMemory, maxMemory, port);
   res.status(201).json(publicServer(db.prepare('SELECT * FROM servers WHERE id=?').get(info.lastInsertRowid)));
 });
-app.patch('/api/servers/:id', requireAuth, (req, res) => {
+app.patch('/api/servers/:id', requireAdmin, (req, res) => {
   const s = db.prepare('SELECT * FROM servers WHERE id=?').get(Number(req.params.id));
   if (!s) return res.status(404).json({ error: 'Server not found' });
   if (processes.has(s.id) && processes.get(s.id).child.exitCode === null) return res.status(409).json({ error: 'Stop the server before changing its settings.' });
@@ -106,7 +145,7 @@ app.patch('/api/servers/:id', requireAuth, (req, res) => {
   db.prepare('UPDATE servers SET name=?,jar=?,min_memory=?,max_memory=?,port=? WHERE id=?').run(name, jar, min, max, port, s.id);
   res.json(publicServer(db.prepare('SELECT * FROM servers WHERE id=?').get(s.id)));
 });
-app.delete('/api/servers/:id', requireAuth, (req, res) => {
+app.delete('/api/servers/:id', requireAdmin, (req, res) => {
   const id = Number(req.params.id), s = db.prepare('SELECT * FROM servers WHERE id=?').get(id);
   if (!s) return res.status(404).json({ error: 'Server not found' });
   if (processes.has(id) && processes.get(id).child.exitCode === null) return res.status(409).json({ error: 'Stop the server before deleting it.' });
@@ -142,7 +181,7 @@ function startServer(id) {
   if (!server) return;
   const dir = serverDir(server), jarPath = path.resolve(dir, server.jar);
   if (!jarPath.startsWith(dir + path.sep) || !fs.existsSync(jarPath)) throw new Error(`Place ${server.jar} in this server's directory first.`);
-  const child = spawn(process.env.JAVA_BIN || 'java', [`-Xms${server.min_memory}M`, `-Xmx${server.max_memory}M`, '-jar', jarPath, 'nogui'], { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, LANG: 'C.UTF-8' } });
+  const child = spawn(configuredJava(), [`-Xms${server.min_memory}M`, `-Xmx${server.max_memory}M`, '-jar', jarPath, 'nogui'], { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, LANG: 'C.UTF-8' } });
   const entry = { child, startedAt: new Date().toISOString(), players: '—' }; processes.set(id, entry);
   const consume = (stream, prefix = '') => { let data = ''; stream.on('data', chunk => { data += chunk.toString(); const rows = data.split(/[\r\n]+/); data = rows.pop() || ''; for (const row of rows) { if (!row.trim()) continue; logLine(id, prefix + row); const m = row.match(/There are (\d+) of a max of (\d+) players online/); if (m) entry.players = `${m[1]} / ${m[2]}`; } }); stream.on('end', () => { if (data.trim()) logLine(id, prefix + data); }); };
   consume(child.stdout); consume(child.stderr, '[err] ');
@@ -341,8 +380,34 @@ app.get('/api/eggs', requireAuth, (_req, res) => res.json([
   { id: 'vanilla', name: 'Vanilla', description: 'Official Minecraft Java server without third-party modifications.', category: 'Minecraft Java' },
   { id: 'purpur', name: 'Purpur', description: 'Configurable Paper fork with additional gameplay options.', category: 'Minecraft Java' }
 ]));
+
+const JAVA_HOME_DIR=path.join(DATA,'java-runtime');
+const JAVA_BIN_FILE=path.join(DATA,'java-bin');
+function configuredJava(){return process.env.JAVA_BIN||(fs.existsSync(JAVA_BIN_FILE)?fs.readFileSync(JAVA_BIN_FILE,'utf8').trim():'java');}
+app.post('/api/java/install', requireAdmin, async (req,res)=>{
+ if(process.platform!=='linux'||!['x64','arm64'].includes(process.arch))return res.status(400).json({error:'Automatic Java installation supports Linux x64 and ARM64 hosts only.'});
+ const version=Number(req.body?.version||21);
+ if(![17,21,25].includes(version))return res.status(400).json({error:'Choose Java 17, 21 or 25.'});
+ if(fs.existsSync(JAVA_HOME_DIR))return res.status(409).json({error:'A panel-managed Java runtime already exists. Remove it manually before replacing it.'});
+ const arch=process.arch==='arm64'?'aarch64':'x64';
+ const archive=path.join(DATA,'java-'+version+'-'+crypto.randomBytes(5).toString('hex')+'.tar.gz');
+ const stage=path.join(DATA,'java-stage-'+crypto.randomBytes(5).toString('hex'));
+ try{
+  fs.mkdirSync(stage,{recursive:true,mode:0o700});
+  await downloadRemoteFile('https://api.adoptium.net/v3/binary/latest/'+version+'/ga/linux/'+arch+'/jre/hotspot/normal/eclipse',archive,220*1024*1024);
+  const listing=await new Promise((resolve,reject)=>{const p=spawn('tar',['-tzf',archive],{stdio:['ignore','pipe','ignore']});let data='';p.stdout.on('data',c=>{data+=c.toString();if(data.length>4*1024*1024)p.kill()});p.on('error',reject);p.on('close',code=>code===0?resolve(data):reject(new Error('Could not inspect Java archive.')))});
+  if(listing.split('\n').some(x=>x.startsWith('/')||x.split('/').includes('..')))throw new Error('Java archive contains an unsafe path.');
+  await new Promise((resolve,reject)=>{const p=spawn('tar',['-xzf',archive,'-C',stage,'--strip-components=1','--no-same-owner','--no-same-permissions'],{stdio:'ignore'});p.on('error',reject);p.on('close',code=>code===0?resolve():reject(new Error('Could not extract Java runtime.')))});
+  const executable=path.join(stage,'bin','java');
+  if(!fs.existsSync(executable)||!fs.statSync(executable).isFile())throw new Error('Downloaded archive does not contain Java.');
+  fs.chmodSync(executable,0o700);fs.renameSync(stage,JAVA_HOME_DIR);fs.writeFileSync(JAVA_BIN_FILE,path.join(JAVA_HOME_DIR,'bin','java'),{mode:0o600});
+  return res.json({ok:true,version,executable:path.join(JAVA_HOME_DIR,'bin','java')});
+ }catch(error){fs.rmSync(stage,{recursive:true,force:true});return res.status(502).json({error:error.message||'Java installation failed.'})}
+ finally{fs.rmSync(archive,{force:true})}
+});
+
 app.get('/api/java/status', requireAuth, (_req, res) => {
-  const child = spawn(process.env.JAVA_BIN || 'java', ['-version'], { stdio: ['ignore','pipe','pipe'] });
+  const child = spawn(configuredJava(), ['-version'], { stdio: ['ignore','pipe','pipe'] });
   let output = '';
   child.stdout.on('data', c => output += c.toString());
   child.stderr.on('data', c => output += c.toString());
