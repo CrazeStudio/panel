@@ -501,7 +501,8 @@
             </div>
             <span class="muted mono">${file.type === 'directory' ? 'Directory' : formatBytes(file.size)}</span>
             <div class="file-actions">
-              ${file.type === 'file' ? `<button class="btn small" data-file-open="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Edit</button>` : ''}
+              ${file.type === 'file' ? `<button class="btn small" data-file-open="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Edit</button><button class="btn small" data-file-download="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Download</button>` : ''}
+              <button class="btn small" data-file-rename="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Rename</button>
               <button class="btn small danger" data-file-delete="${esc([state.filePath, file.name].filter(Boolean).join('/'))}">Delete</button>
             </div>
           </div>
@@ -509,6 +510,31 @@
       </section>`;
   }
 
+  async function downloadFile(filePath) {
+    const query = new URLSearchParams({ path: filePath });
+    const result = await api(`/servers/${state.serverId}/download?${query}`);
+    const binary = atob(result.contentBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = result.name || filePath.split('/').pop();
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function renameFileModal(filePath) {
+    const name = filePath.split('/').pop();
+    fileModal('Rename file or folder', 'rename-file-form', 'rename-file', `
+      <label class="field-label">Current path<input name="path" value="${esc(filePath)}" readonly></label>
+      <label class="field-label">New name<input name="name" value="${esc(name)}" maxlength="120" pattern="[a-zA-Z0-9_ .()\\-]+" required></label>
+    `, 'Rename');
+  }
   function renderBackups() {
     return `
       <div class="page-heading">
@@ -787,6 +813,16 @@ AGENT_PORT=8080</pre>
         return;
       }
 
+      if (type === 'rename-file') {
+        await api(`/servers/${state.serverId}/files`, {
+          method: 'POST',
+          body: { action: 'rename', sourcePath: values.path, name: values.name },
+        });
+        closeModal();
+        toast('File or folder renamed.');
+        await loadFiles();
+        return;
+      }
       if (type === 'edit-resources') {
         await api(`/servers/${state.serverId}`, {
           method: 'PATCH',
@@ -983,6 +1019,24 @@ AGENT_PORT=8080</pre>
       return;
     }
 
+    const fileDownloadButton = event.target.closest('[data-file-download]');
+    if (fileDownloadButton) {
+      try {
+        fileDownloadButton.disabled = true;
+        await downloadFile(fileDownloadButton.dataset.fileDownload);
+      } catch (error) {
+        toast(error.message, true);
+      } finally {
+        fileDownloadButton.disabled = false;
+      }
+      return;
+    }
+
+    const fileRenameButton = event.target.closest('[data-file-rename]');
+    if (fileRenameButton) {
+      renameFileModal(fileRenameButton.dataset.fileRename);
+      return;
+    }
     const fileDeleteButton = event.target.closest('[data-file-delete]');
     if (fileDeleteButton) {
       confirmModal('Delete file or folder?', `This permanently deletes ${fileDeleteButton.dataset.fileDelete} from the server directory.`, 'delete-file', { path: fileDeleteButton.dataset.fileDelete });
