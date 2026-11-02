@@ -46,7 +46,7 @@ app.use(rateLimit({
 }));
 
 function authenticate(req, res, next) {
-  const supplied = String(req.get('authorization') || '').replace(/^Bearer\\s+/i, '');
+  const supplied = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '');
   const expected = Buffer.from(TOKEN);
   const actual = Buffer.from(supplied);
 
@@ -377,7 +377,7 @@ app.get('/api/servers/:id/backups', async (req, res, next) => {
     const directory = path.join(BACKUP_ROOT, serverId);
     await fs.promises.mkdir(directory, { recursive: true });
     const names = (await fs.promises.readdir(directory))
-      .filter((name) => /^[a-zA-Z0-9_.-]+\\.tar\\.gz$/.test(name));
+      .filter((name) => /^[a-zA-Z0-9_.-]+\.tar\.gz$/.test(name));
 
     const backups = await Promise.all(names.map(async (name) => {
       const stat = await fs.promises.stat(path.join(directory, name));
@@ -411,7 +411,7 @@ app.post('/api/servers/:id/backups/restore', async (req, res, next) => {
     const serverId = req.params.id;
     if (!safeServerId(serverId)) return res.status(400).json({ error: 'Invalid server identifier.' });
     const name = String(req.body?.name || '');
-    if (!/^[a-zA-Z0-9_.-]+\\.tar\\.gz$/.test(name)) return res.status(400).json({ error: 'Invalid backup name.' });
+    if (!/^[a-zA-Z0-9_.-]+\.tar\.gz$/.test(name)) return res.status(400).json({ error: 'Invalid backup name.' });
 
     const state = await inspectServer(serverId);
     if (state.status === 'running') return res.status(409).json({ error: 'Stop the server before restoring a backup.' });
