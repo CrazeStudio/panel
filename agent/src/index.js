@@ -263,7 +263,7 @@ app.get('/api/servers/:id/file', async (req, res, next) => {
   }
 });
 
-app.put('/api/servers/:id/file', async (req, res, next) => {
+app.get('/api/servers/:id/download', async (req, res, next) => {\n  try {\n    const relative = String(req.query.path || '');\n    if (!relative) return res.status(400).json({ error: 'File path is required.' });\n    const file = resolveInside(serverDirectory(req.params.id), relative);\n    const stat = await fs.promises.stat(file);\n    if (!stat.isFile()) return res.status(400).json({ error: 'Only regular files can be downloaded.' });\n    if (stat.size > 64 * 1024 * 1024) return res.status(413).json({ error: 'Download limit is 64 MB.' });\n    const content = await fs.promises.readFile(file);\n    res.json({ name: path.basename(file), size: content.length, contentBase64: content.toString('base64') });\n  } catch (error) {\n    next(error);\n  }\n});\napp.put('/api/servers/:id/file', async (req, res, next) => {
   try {
     const relative = String(req.body?.path || '');
     if (!relative) return res.status(400).json({ error: 'File path is required.' });
@@ -308,6 +308,32 @@ app.post('/api/servers/:id/files', async (req, res, next) => {
       const destination = resolveInside(root, [relative, name].filter(Boolean).join('/'));
       await fs.promises.writeFile(destination, data, { flag: 'wx', mode: 0o600 });
       return res.status(201).json({ ok: true, size: data.length });
+    }
+
+    if (action === 'rename') {
+      const sourcePath = String(req.body?.sourcePath || '');
+      const name = String(req.body?.name || '');
+      if (!sourcePath || !/^[a-zA-Z0-9_ .()-]{1,120}$/.test(name) || name.startsWith('.')) {
+        return res.status(400).json({ error: 'Provide a valid source path and new file name.' });
+      }
+
+      const source = resolveInside(root, sourcePath);
+      const stat = await fs.promises.lstat(source);
+      if (stat.isSymbolicLink()) return res.status(400).json({ error: 'Symbolic links cannot be renamed.' });
+      const parent = path.posix.dirname(sourcePath);
+      const destinationPath = parent === '.' ? name : parent + '/' + name;
+      const destination = resolveInside(root, destinationPath);
+      if (source === destination) return res.json({ ok: true, path: destinationPath });
+
+      try {
+        await fs.promises.lstat(destination);
+        return res.status(409).json({ error: 'A file or folder with that name already exists.' });
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+
+      await fs.promises.rename(source, destination);
+      return res.json({ ok: true, path: destinationPath });
     }
 
     return res.status(400).json({ error: 'Unsupported file operation.' });
