@@ -426,7 +426,7 @@ app.post('/api/servers/:id/backups/restore', async (req, res, next) => {
       const listing = await runTar(['-tzf', archive]);
       const entries = listing.split(/\\r?\\n/).filter(Boolean);
       if (entries.some((entry) => {
-        const normalized = path.posix.normalize(entry.replace(/^\\.\\//, ''));
+        const normalized = path.posix.normalize(entry.replace(/^\.\//, ''));
         return path.posix.isAbsolute(normalized) || normalized === '..' || normalized.startsWith('../');
       })) {
         throw new Error('Backup contains an unsafe path.');
