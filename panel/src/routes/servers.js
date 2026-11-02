@@ -5,14 +5,30 @@ const { requireAdmin, asyncRoute } = require('../middleware/auth');
 const { agentRequest } = require('../lib/agent-client');
 const { audit } = require('../lib/audit');
 
-function canAccess(db, server, user) {
-  if (user.role === 'admin' || server.owner_id === user.id) return true;
-  return Boolean(db.prepare('SELECT 1 FROM server_users WHERE server_id = ? AND user_id = ?').get(server.id, user.id));
+function permissionFor(db, server, user) {
+  if (user.role === 'admin' || server.owner_id === user.id) return 'admin';
+  return db.prepare('SELECT permission FROM server_users WHERE server_id = ? AND user_id = ?')
+    .get(server.id, user.id)?.permission || null;
 }
 
-function visibleServer(server, user) {
+function canAccess(db, server, user) {
+  return Boolean(permissionFor(db, server, user));
+}
+
+function canOperate(db, server, user) {
+  const permission = permissionFor(db, server, user);
+  return permission === 'admin' || permission === 'operator';
+}
+
+function visibleServer(db, server, user) {
   const { owner_id, ...publicData } = server;
-  return { ...publicData, canManage: user.role === 'admin' || owner_id === user.id };
+  const permission = permissionFor(db, server, user);
+  return {
+    ...publicData,
+    canManage: user.role === 'admin' || owner_id === user.id,
+    canOperate: permission === 'admin' || permission === 'operator',
+    accessPermission: permission,
+  };
 }
 
 function getServer(db, id) {
@@ -30,9 +46,9 @@ function createServersRouter(db) {
       try {
         const live = await agentRequest(db, server.node_id, `/api/servers/${server.id}`, { timeout: 5000 });
         db.prepare('UPDATE servers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(live.status, server.id);
-        return visibleServer({ ...server, status: live.status }, req.session.user);
+        return visibleServer(db, { ...server, status: live.status }, req.session.user);
       } catch (error) {
-        return visibleServer({ ...server, status: 'node-offline', agentError: error.message }, req.session.user);
+        return visibleServer(db, { ...server, status: 'node-offline', agentError: error.message }, req.session.user);
       }
     }));
 
@@ -97,9 +113,40 @@ function createServersRouter(db) {
       Promise.resolve(db.prepare('SELECT id, name, location, url FROM nodes WHERE id = ?').get(server.node_id)),
     ]);
 
-    res.json({ server: visibleServer({ ...server, status: live.status }, req.session.user), live, node });
+    res.json({ server: visibleServer(db, { ...server, status: live.status }, req.session.user), live, node });
   }));
 
+  router.get('/:id/users', requireAdmin, (req, res) => {
+    const server = getServer(db, req.params.id);
+    if (!server) return res.status(404).json({ error: 'Server not found.' });
+    const users = db.prepare('SELECT id, username, email, role, disabled FROM users ORDER BY username').all();
+    const assignments = db.prepare('SELECT user_id, permission FROM server_users WHERE server_id = ?').all(server.id);
+    res.json({ users, assignments });
+  });
+
+  router.post('/:id/users', requireAdmin, (req, res) => {
+    const server = getServer(db, req.params.id);
+    if (!server) return res.status(404).json({ error: 'Server not found.' });
+    const userId = String(req.body?.userId || '');
+    const permission = req.body?.permission;
+    if (!['operator', 'read'].includes(permission)) return res.status(400).json({ error: 'Permission must be operator or read.' });
+    const user = db.prepare('SELECT id, disabled FROM users WHERE id = ?').get(userId);
+    if (!user || user.disabled) return res.status(404).json({ error: 'Active panel user not found.' });
+    if (user.id === server.owner_id) return res.status(409).json({ error: 'The server owner already has full access.' });
+    db.prepare('INSERT INTO server_users (server_id, user_id, permission) VALUES (?, ?, ?) ON CONFLICT(server_id, user_id) DO UPDATE SET permission = excluded.permission')
+      .run(server.id, userId, permission);
+    audit(db, req, 'server_access_granted', 'server', server.id, { userId, permission });
+    res.json({ ok: true });
+  });
+
+  router.delete('/:id/users/:userId', requireAdmin, (req, res) => {
+    const server = getServer(db, req.params.id);
+    if (!server) return res.status(404).json({ error: 'Server not found.' });
+    const result = db.prepare('DELETE FROM server_users WHERE server_id = ? AND user_id = ?').run(server.id, req.params.userId);
+    if (!result.changes) return res.status(404).json({ error: 'Server access assignment not found.' });
+    audit(db, req, 'server_access_revoked', 'server', server.id, { userId: req.params.userId });
+    res.json({ ok: true });
+  });
   router.patch('/:id', requireAdmin, asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
@@ -137,7 +184,7 @@ function createServersRouter(db) {
   router.post('/:id/power/:action', asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
-    if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
+    if (!canOperate(db, server, req.session.user)) return res.status(403).json({ error: 'Operator permission is required for power actions.' });
 
     const action = req.params.action;
     if (!['start', 'stop', 'restart', 'kill'].includes(action)) {
@@ -164,7 +211,7 @@ function createServersRouter(db) {
   router.post('/:id/console', asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
-    if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
+    if (!canOperate(db, server, req.session.user)) return res.status(403).json({ error: 'Operator permission is required to send console commands.' });
     const command = String(req.body?.command || '').trim();
     if (!command || command.length > 500) return res.status(400).json({ error: 'Enter a command under 500 characters.' });
     const result = await agentRequest(db, server.node_id, `/api/servers/${server.id}/console`, {
@@ -201,7 +248,7 @@ function createServersRouter(db) {
   router.put('/:id/file', asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
-    if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
+    if (!canOperate(db, server, req.session.user)) return res.status(403).json({ error: 'Operator permission is required to edit files.' });
     res.json(await agentRequest(db, server.node_id, `/api/servers/${server.id}/file`, {
       method: 'PUT',
       body: { path: req.body?.path, content: req.body?.content },
@@ -211,7 +258,7 @@ function createServersRouter(db) {
   router.post('/:id/files', asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
-    if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
+    if (!canOperate(db, server, req.session.user)) return res.status(403).json({ error: 'Operator permission is required to modify files.' });
     res.json(await agentRequest(db, server.node_id, `/api/servers/${server.id}/files`, {
       method: 'POST',
       body: req.body,
@@ -222,7 +269,7 @@ function createServersRouter(db) {
   router.delete('/:id/file', asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
-    if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
+    if (!canOperate(db, server, req.session.user)) return res.status(403).json({ error: 'Operator permission is required to delete files.' });
     const query = new URLSearchParams({ path: String(req.query.path || '') });
     res.json(await agentRequest(db, server.node_id, `/api/servers/${server.id}/file?${query}`, { method: 'DELETE' }));
   }));
@@ -237,7 +284,7 @@ function createServersRouter(db) {
   router.post('/:id/backups', asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
-    if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
+    if (!canOperate(db, server, req.session.user)) return res.status(403).json({ error: 'Operator permission is required to create backups.' });
     const result = await agentRequest(db, server.node_id, `/api/servers/${server.id}/backups`, {
       method: 'POST',
       timeout: 120000,
@@ -250,7 +297,7 @@ function createServersRouter(db) {
   router.post('/:id/backups/restore', asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
-    if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
+    if (!canOperate(db, server, req.session.user)) return res.status(403).json({ error: 'Operator permission is required to restore backups.' });
     const name = String(req.body?.name || '');
     const result = await agentRequest(db, server.node_id, `/api/servers/${server.id}/backups/restore`, {
       method: 'POST',
