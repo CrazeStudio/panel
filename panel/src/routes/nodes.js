@@ -42,8 +42,13 @@ function createNodesRouter(db) {
       return res.status(400).json({ error: 'Provide a node name and a valid base URL (for example https://node.example.com:8080).' });
     }
 
+    const suppliedToken = String(req.body?.token || '').trim();
+    if (suppliedToken && !/^[a-fA-F0-9]{64}$/.test(suppliedToken)) {
+      return res.status(400).json({ error: 'A supplied node token must be 64 hexadecimal characters.' });
+    }
+
     const id = crypto.randomUUID();
-    const token = randomToken();
+    const token = suppliedToken || randomToken();
     const encrypted = encryptSecret(token);
     db.prepare(`
       INSERT INTO nodes (id, name, url, location, token_cipher, token_iv, token_tag)
