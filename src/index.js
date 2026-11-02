@@ -61,7 +61,7 @@ function requireCsrf(req, res, next) {
   if (!req.session.csrf || req.get('x-csrf-token') !== req.session.csrf) return res.status(403).json({ error: 'Invalid security token' });
   next();
 }
-app.use('/api', (req, res, next) => req.path === '/setup' || req.path === '/login' || req.path === '/me' ? next() : requireAuth(req, res, () => requireCsrf(req, res, next)));
+app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); if (req.path === '/setup' || req.path === '/login' || req.path === '/me') return next(); return requireAuth(req, res, () => requireCsrf(req, res, next)); });
 
 app.get('/api/setup', (_req, res) => res.json({ needed: db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0 }));
 app.post('/api/setup', async (req, res) => {
@@ -151,10 +151,18 @@ function startServer(id) {
   logLine(id, `Panel: starting ${server.jar}`);
 }
 app.get('/api/servers/:id/console', requireAuth, (req, res) => {
-  const id = Number(req.params.id), before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
+  const id = Number(req.params.id);
   if (!db.prepare('SELECT id FROM servers WHERE id=?').get(id)) return res.status(404).json({ error: 'Server not found' });
-  const lines = db.prepare('SELECT id,line,created_at FROM console_lines WHERE server_id=? AND id<? ORDER BY id DESC LIMIT 200').all(id, before).reverse();
-  res.json({ lines, nextBefore: lines.length ? lines[0].id : before });
+  const afterRaw = req.query.after;
+  let lines;
+  if (afterRaw !== undefined && Number(afterRaw) > 0) {
+    const after = Number(afterRaw);
+    if (!Number.isSafeInteger(after) || after < 0) return res.status(400).json({ error: 'Invalid console cursor' });
+    lines = db.prepare('SELECT id,line,created_at FROM console_lines WHERE server_id=? AND id>? ORDER BY id ASC LIMIT 500').all(id, after);
+  } else {
+    lines = db.prepare('SELECT id,line,created_at FROM console_lines WHERE server_id=? ORDER BY id DESC LIMIT 300').all(id).reverse();
+  }
+  res.json({ lines, nextAfter: lines.length ? lines[lines.length - 1].id : (Number(afterRaw) || 0) });
 });
 function getServer(id, res) { const s = db.prepare('SELECT * FROM servers WHERE id=?').get(Number(id)); if (!s) res.status(404).json({ error: 'Server not found' }); return s; }
 function safeFile(server, relative = '') {
@@ -168,8 +176,24 @@ function safeFile(server, relative = '') {
 }
 app.get('/api/servers/:id/files', requireAuth, (req, res) => {
   const s = getServer(req.params.id, res); if (!s) return;
-  try { const dir = safeFile(s, req.query.path || ''); const entries = fs.readdirSync(dir, { withFileTypes: true }).filter(e => !e.name.startsWith('.')).map(e => { const p = path.join(dir, e.name); const st = fs.lstatSync(p); if (st.isSymbolicLink()) return null; return { name: e.name, type: e.isDirectory() ? 'directory' : 'file', size: st.size, modifiedAt: st.mtime.toISOString() }; }).filter(Boolean).sort((a,b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1); res.json({ path: req.query.path || '', entries }); }
+  try { const dir = safeFile(s, req.query.path || ''); const entries = fs.readdirSync(dir, { withFileTypes: true }).filter(e => !e.name.startsWith('.')).map(e => { const p = path.join(dir, e.name); const st = fs.lstatSync(p); if (st.isSymbolicLink()) return null; if (!st.isDirectory() && !st.isFile()) return null; return { name: e.name, type: st.isDirectory() ? 'directory' : 'file', size: st.size, modifiedAt: st.mtime.toISOString() }; }).filter(Boolean).sort((a,b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1); res.json({ path: req.query.path || '', entries }); }
   catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/servers/:id/directory', requireAuth, (req, res) => {
+  const s = getServer(req.params.id, res); if (!s) return;
+  const parent = typeof req.body?.path === 'string' ? req.body.path : '';
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  if (!name || name.length > 120 || name.startsWith('.') || name === '.' || name === '..' || name.includes('/') || name.includes('\\') || name.split('').some(ch => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) {
+    return res.status(400).json({ error: 'Enter a valid folder name. Hidden names and path separators are not allowed.' });
+  }
+  try {
+    const target = safeFile(s, [parent, name].filter(Boolean).join('/'));
+    if (fs.existsSync(target)) return res.status(409).json({ error: 'A file or folder with that name already exists.' });
+    fs.mkdirSync(target, { mode: 0o700 });
+    return res.status(201).json({ ok: true, name });
+  } catch (error) {
+    return res.status(400).json({ error: error.message || 'Could not create folder.' });
+  }
 });
 app.get('/api/servers/:id/file', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; try { const p = safeFile(s, req.query.path); if (!fs.statSync(p).isFile()) return res.status(400).json({ error: 'Not a file' }); if (fs.statSync(p).size > 1024 * 1024) return res.status(413).json({ error: 'Files over 1 MB cannot be edited in the panel' }); res.json({ content: fs.readFileSync(p, 'utf8') }); } catch(e) { res.status(400).json({ error: e.message }); } });
 app.put('/api/servers/:id/file', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; const { path: rel, content } = req.body || {}; if (typeof content !== 'string' || Buffer.byteLength(content) > 1024 * 1024) return res.status(400).json({ error: 'Text files are limited to 1 MB' }); try { const p = safeFile(s, rel); if (fs.existsSync(p) && !fs.statSync(p).isFile()) return res.status(400).json({ error: 'Not a file' }); fs.writeFileSync(p, content, { mode: 0o600 }); res.json({ ok: true }); } catch(e) { res.status(400).json({ error: e.message }); } });
