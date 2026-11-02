@@ -301,10 +301,19 @@
     return `<article class="node-card">
       <header><h3>${esc(node.name)}</h3>${statusBadge(node.online ? 'online' : 'offline')}</header>
       <p>${esc(node.url)}</p>
-      <div class="node-card-foot"><span class="muted">${esc(node.location || 'No location')}</span><span class="muted mono">${node.docker ? `Docker ${esc(node.docker.version)}` : 'Agent not reachable'}</span></div>
+      <div class="node-card-foot">
+        <span class="muted">${esc(node.location || 'No location')}<span class="subline">Last contact: ${esc(dateText(node.last_seen))}</span></span>
+        <span class="muted mono">${node.docker ? `Docker ${esc(node.docker.version)}` : 'Agent not reachable'}</span>
+      </div>
+      <div class="node-card-foot">
+        <span class="help">${node.error ? esc(node.error) : 'Agent health check'}</span>
+        <div class="inline-actions">
+          <button class="btn small" data-node-test="${esc(node.id)}">Test connection</button>
+          <button class="btn small danger" data-node-delete="${esc(node.id)}">Remove</button>
+        </div>
+      </div>
     </article>`;
   }
-
   function renderServers() {
     return `
       ${heading('INSTANCES', 'Servers', 'Manage Minecraft Java and Bedrock server instances.',
@@ -332,19 +341,8 @@
     return `
       ${heading('INFRASTRUCTURE', 'Nodes', 'Machines that run Docker containers and host your game servers.',
         '<button class="btn primary" data-action="new-node">＋ Register node</button>')}
-      <section class="node-grid">${state.nodes.map((node) => nodeCard(node) + `
-        <div class="node-card">
-          <div class="node-card-foot">
-            <span class="muted">Last contact: ${esc(dateText(node.last_seen))}</span>
-            <div class="inline-actions">
-              <button class="btn small" data-node-test="${esc(node.id)}">Test</button>
-              <button class="btn small danger" data-node-delete="${esc(node.id)}">Remove</button>
-            </div>
-          </div>
-        </div>
-      `).join('') || emptyState('No nodes connected', 'Create a node record, install the agent on a Linux host and use its shared token.', '<button class="btn primary" data-action="new-node">Register first node</button>')}</section>`;
+      <section class="node-grid">${state.nodes.map((node) => nodeCard(node)).join('') || emptyState('No nodes connected', 'Create a node record, install the agent on a Linux host and use its shared token.', '<button class="btn primary" data-action="new-node">Register first node</button>')}</section>`;
   }
-
   function renderAdmin() {
     return `
       ${heading('CONTROL', 'Administration', 'Manage panel accounts and review privileged activity.')}
@@ -653,7 +651,8 @@
           <label class="field-label">Memory (MB)<input name="memoryMb" type="number" min="1024" max="131072" step="256" value="4096" required></label>
           <label class="field-label">CPU cores<input name="cpuCores" type="number" min="0.5" max="64" step="0.5" value="2" required></label>
         </div>
-        <p class="help">The agent pulls the allow-listed image from its registry, creates persistent server storage and starts the container. First boot may take several minutes.</p>
+        <label class="field-label" style="display:flex;align-items:flex-start;gap:10px"><input name="eulaAccepted" type="checkbox" required style="width:auto;margin-top:2px"> I agree to the Minecraft End User License Agreement (EULA).</label>
+        <p class="help">The agent pulls the allow-listed image from its registry, creates persistent server storage and starts the container. First boot may take several minutes. You must review and accept the EULA before provisioning Minecraft Java servers.</p>
       </form>`,
       '<button class="btn" data-action="close-modal">Cancel</button><button class="btn primary" type="submit" form="new-server-form">Create and install</button>');
   }
@@ -664,7 +663,8 @@
         <label class="field-label">Node name<input name="name" required maxlength="64" placeholder="Main node"></label>
         <label class="field-label">Agent URL<input name="url" type="url" required placeholder="https://node1.example.com:8080"></label>
         <label class="field-label">Location<input name="location" maxlength="80" placeholder="Frankfurt, Germany"></label>
-        <p class="help">CrazePanel creates a unique agent token and encrypts it in the panel database. Copy it once after registering, then place it in the agent environment file on the host.</p>
+        <label class="field-label">Existing agent token (optional)<input name="token" maxlength="64" autocomplete="off" placeholder="Leave blank to generate a new token"></label>
+        <p class="help">Generate a token in the panel for a separately installed node. For Docker Compose, supply the same 64-character NODE_TOKEN configured in the environment. The token is encrypted after registration.</p>
       </form>`,
       '<button class="btn" data-action="close-modal">Cancel</button><button class="btn primary" type="submit" form="new-node-form">Generate node token</button>');
   }
@@ -718,6 +718,7 @@
       if (type === 'new-server') {
         const payload = {
           ...values,
+          eulaAccepted: form.querySelector('[name="eulaAccepted"]')?.checked === true,
           port: Number(values.port),
           memoryMb: Number(values.memoryMb),
           cpuCores: Number(values.cpuCores),
@@ -733,6 +734,7 @@
       if (type === 'new-node') {
         const result = await api('/nodes', { method: 'POST', body: values });
         closeModal();
+        await refreshData();
         openModal('Node token generated', `
           <p class="help">Copy this token now. It is encrypted in the panel database and cannot be displayed again.</p>
           <div class="token-box" id="node-token">${esc(result.token)}</div>
@@ -744,7 +746,6 @@ AGENT_PORT=8080</pre>
           <button class="btn" data-action="close-modal">Close</button>
           <button class="btn primary" data-action="copy-node-token">Copy token</button>
         `);
-        await refreshData();
         return;
       }
 
