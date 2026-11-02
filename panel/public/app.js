@@ -186,6 +186,7 @@
           <nav class="nav">
             ${navButton('overview', '◫', 'Overview')}
             ${navButton('servers', '▣', 'Servers')}
+            ${navButton('account', '◉', 'Account')}
             ${admin ? navButton('nodes', '⌘', 'Nodes') : ''}
           </nav>
           ${admin ? '<div class="side-section">Management</div><nav class="nav">' +
@@ -226,6 +227,7 @@
     return ({
       overview: 'Overview',
       servers: 'Servers',
+      account: 'Account',
       nodes: 'Nodes',
       admin: 'Administration',
       activity: 'Activity',
@@ -392,11 +394,29 @@
       </section>`;
   }
 
+  function renderAccount() {
+    return `
+      ${heading('ACCOUNT SECURITY', 'Account', 'Change your sign-in password and review your current account.')}
+      <section class="panel" style="max-width:620px">
+        <div class="panel-head"><strong>Account profile</strong><small>${esc(state.user.role.toUpperCase())}</small></div>
+        <div class="file-row"><span>Username</span><strong>${esc(state.user.username)}</strong></div>
+        <div class="file-row"><span>Email</span><strong>${esc(state.user.email || 'Not set')}</strong></div>
+        <form class="form-stack" id="password-form" data-form="password-change" style="padding:18px">
+          <label class="field-label">Current password<input type="password" name="currentPassword" autocomplete="current-password" required></label>
+          <label class="field-label">New password<input type="password" name="newPassword" minlength="12" maxlength="128" autocomplete="new-password" required></label>
+          <label class="field-label">Confirm new password<input type="password" name="confirmPassword" minlength="12" maxlength="128" autocomplete="new-password" required></label>
+          <button class="btn primary" type="submit">Change password</button>
+        </form>
+      </section>
+      <p class="help" style="margin-top:12px">Use a unique password of at least 12 characters. Changing it renews your current session.</p>
+    `;
+  }
   function renderPage() {
     if (state.view === 'servers') return renderServers();
     if (state.view === 'nodes') return renderNodes();
     if (state.view === 'admin') return renderAdmin();
     if (state.view === 'activity') return renderActivity();
+    if (state.view === 'account') return renderAccount();
     if (state.view === 'server') return renderServerPage();
     return renderOverview();
   }
@@ -833,6 +853,21 @@ AGENT_PORT=8080</pre>
         closeModal();
         toast('File or folder renamed.');
         await loadFiles();
+        return;
+      }
+      if (type === 'password-change') {
+        if (values.newPassword !== values.confirmPassword) {
+          toast('The new passwords do not match.', true);
+          return;
+        }
+        const result = await api('/auth/password', {
+          method: 'POST',
+          body: { currentPassword: values.currentPassword, newPassword: values.newPassword },
+        });
+        state.user = result.user;
+        state.csrfToken = result.csrfToken;
+        form.reset();
+        toast('Password changed successfully.');
         return;
       }
       if (type === 'share-user') {
