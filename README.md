@@ -152,7 +152,11 @@ docker compose up -d --build
 ```
 
 4. Complete first-run admin setup at `http://localhost:3000`.
-5. Add a node using URL `http://agent:8080` and paste the same `NODE_TOKEN` configured in `.env`.
+5. Add a node using URL `http://agent:8080`, and paste the same 64-character `NODE_TOKEN` configured in `.env` into the optional existing-token field.
+
+The Compose file binds the same absolute server data path into the agent container and the host Docker daemon. This is required because Docker resolves bind-mount source paths on the host, not inside the agent container. Change `SERVER_DATA_ROOT_HOST` in `.env` only when you also change the agent's `SERVER_DATA_ROOT` to the matching path.
+
+For local HTTP testing set `COOKIE_SECURE=false` in `.env`; for HTTPS deployments set it to `true` and make sure the reverse proxy forwards the original HTTPS scheme.
 
 **Docker socket warning:** access to `/var/run/docker.sock` effectively grants host-level control. Keep the agent on a trusted server, protect its token, firewall the agent port, and do not expose the Docker socket. The current server image catalogue is allow-listed in `eggs/index.json`; this build does not accept arbitrary client-supplied Docker images.
 
@@ -167,7 +171,8 @@ All panel API writes require the signed-in session and the `X-CSRF-Token` return
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 - `GET|POST /api/nodes`
-- `POST|DELETE /api/nodes/:id/test` (test is POST; deletion is DELETE)
+- `POST /api/nodes/:id/test`
+- `DELETE /api/nodes/:id`
 - `GET|POST /api/servers`
 - `GET|PATCH|DELETE /api/servers/:id`
 - `POST /api/servers/:id/power/:action`
@@ -178,7 +183,8 @@ All panel API writes require the signed-in session and the `X-CSRF-Token` return
 - `DELETE /api/servers/:id/file`
 - `GET|POST /api/servers/:id/backups`
 - `POST /api/servers/:id/backups/restore`
-- `GET|POST|PATCH|DELETE /api/admin/users` (individual user paths for update/delete)
+- `GET|POST /api/admin/users`
+- `PATCH|DELETE /api/admin/users/:id`
 - `GET /api/admin/audit`
 
 ## Node API
