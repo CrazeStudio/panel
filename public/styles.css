@@ -48,3 +48,6 @@ body{background:#080808;color:#f5f5f5}
 .workspace-console{margin-top:14px}
 .workspace-console .console{height:330px}
 @media(max-width:850px){.admin-grid{grid-template-columns:1fr}.server-summary{grid-template-columns:repeat(2,1fr)}}
+
+/* Enforce a strictly monochrome palette, including legacy inline status colors. */
+body{filter:grayscale(1)}
