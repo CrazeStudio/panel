@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit');
-const { asyncRoute, requireCsrf } = require('../middleware/auth');
+const { asyncRoute, requireAuth, requireCsrf } = require('../middleware/auth');
 const { audit } = require('../lib/audit');
 
 function createAuthRouter(db) {
@@ -98,6 +98,33 @@ function createAuthRouter(db) {
     res.json({ user: req.session?.user || null, csrfToken: req.session?.csrfToken || null });
   });
 
+  router.post('/password', requireAuth(db), requireCsrf, asyncRoute(async (req, res) => {
+    const currentPassword = req.body?.currentPassword;
+    const newPassword = req.body?.newPassword;
+    if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128) {
+      return res.status(400).json({ error: 'The new password must contain 12–128 characters.' });
+    }
+
+    const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.session.user.id);
+    if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+      return res.status(403).json({ error: 'The current password is incorrect.' });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+    audit(db, req, 'password_changed', 'user', user.id);
+
+    req.session.regenerate((error) => {
+      if (error) return res.status(500).json({ error: 'Password changed, but the session could not be renewed. Sign in again.' });
+      const refreshed = db.prepare('SELECT id, username, email, role FROM users WHERE id = ?').get(user.id);
+      req.session.user = refreshed;
+      req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+      req.session.save((saveError) => {
+        if (saveError) return res.status(500).json({ error: 'Password changed, but the new session could not be saved. Sign in again.' });
+        res.json({ ok: true, user: req.session.user, csrfToken: req.session.csrfToken });
+      });
+    });
+  }));
   router.post('/logout', requireCsrf, (req, res) => {
     const userId = req.session?.user?.id;
     if (userId) audit(db, req, 'logout', 'user', userId);
