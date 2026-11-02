@@ -31,4 +31,4 @@ function randomToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
-module.exports = { encryptSecret, decryptSecret, randomToken };
+module.exports = { getKey, encryptSecret, decryptSecret, randomToken };
