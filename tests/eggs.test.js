@@ -17,3 +17,20 @@ test('egg images are restricted to the known itzg images', () => {
     assert.match(egg.image, /^itzg\/minecraft(-bedrock-server|-server):/);
   }
 });
+
+
+const { hasPortConflict } = require('../panel/src/routes/servers');
+
+test('prevents duplicate TCP allocations on the same node and port', () => {
+  assert.equal(hasPortConflict([{ id: 'one', egg_id: 'paper' }], 'purpur'), true);
+  assert.equal(hasPortConflict([{ id: 'one', egg_id: 'vanilla' }], 'fabric'), true);
+});
+
+test('allows the same numeric port when transports differ', () => {
+  assert.equal(hasPortConflict([{ id: 'one', egg_id: 'paper' }], 'bedrock'), false);
+  assert.equal(hasPortConflict([{ id: 'one', egg_id: 'bedrock' }], 'paper'), false);
+});
+
+test('prevents duplicate UDP allocations', () => {
+  assert.equal(hasPortConflict([{ id: 'one', egg_id: 'bedrock' }], 'bedrock'), true);
+});
