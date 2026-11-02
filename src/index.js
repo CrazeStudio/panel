@@ -218,6 +218,7 @@ app.post('/api/servers/:id/command', requireAuth, (req, res) => {
   if (typeof command !== 'string' || !command.trim() || command.length > 200 || /[\r\n\x00]/.test(command)) return res.status(400).json({ error: 'Enter a single command up to 200 characters.' });
   p.child.stdin.write(command.trim() + '\n'); logLine(id, `> ${command.trim()}`); res.json({ ok: true });
 });
+app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found. The backend may be outdated; pull the latest main branch and restart the panel.' }));
 app.get('*', (_req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
 const port = Number(process.env.PORT || 3000);
 app.listen(port, '0.0.0.0', () => console.log(`BlockPanel listening on http://localhost:${port}`));
