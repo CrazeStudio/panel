@@ -309,7 +309,7 @@ app.post('/api/servers/:id/files', async (req, res, next) => {
     if (action === 'upload') {
       const name = String(req.body?.name || '');
       const content = req.body?.contentBase64;
-      if (!name || name.includes('/') || name.includes('\\\\') || name.startsWith('.') ||
+      if (!name || name.includes('/') || name.includes('\\') || name.startsWith('.') ||
           typeof content !== 'string' || content.length > 86 * 1024 * 1024) {
         return res.status(400).json({ error: 'Invalid upload.' });
       }
