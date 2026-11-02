@@ -73,6 +73,11 @@ function createAdminRouter(db) {
       if (admins <= 1) return res.status(409).json({ error: 'At least one active administrator must remain.' });
     }
 
+    const ownedServers = db.prepare('SELECT COUNT(*) AS total FROM servers WHERE owner_id = ?').get(target.id).total;
+    if (ownedServers > 0) {
+      return res.status(409).json({ error: 'This user owns server instances. Reassign or delete those servers before deleting the account.' });
+    }
+
     db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
     audit(db, req, 'user_deleted', 'user', target.id);
     res.json({ ok: true });
