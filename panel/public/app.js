@@ -428,21 +428,75 @@
     }
 
     const tabs = [
-      ['overview', 'Overview'],
-      ['console', 'Console'],
-      ['files', 'Files'],
-      ['backups', 'Backups'],
+      ['overview', '◫', 'Overview'],
+      ['console', '⌁', 'Console'],
+      ['files', '▤', 'Files'],
+      ['backups', '◷', 'Backups'],
+      ['settings', '⚙', 'Settings'],
     ];
 
     return `
-      ${heading('SERVER WORKSPACE', esc(server.name), `${esc(state.eggs[server.egg_id]?.name || server.egg_id)} · ${esc(server.version)} · Port ${server.port}`,
-        `<button class="btn" data-view="servers">← All servers</button>
-         ${server.canManage && state.user.role === 'admin' ? '<button class="btn danger" data-action="delete-server">Delete</button>' : ''}`)}
-      <nav class="server-tabs">${tabs.map(([id, label]) => `<button class="${state.tab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('')}</nav>
-      ${state.tab === 'overview' ? renderServerOverview(server) : ''}
-      ${state.tab === 'console' ? renderConsole() : ''}
-      ${state.tab === 'files' ? renderFiles() : ''}
-      ${state.tab === 'backups' ? renderBackups() : ''}
+      <section class="server-workspace">
+        <aside class="server-sidebar">
+          <button class="server-back" data-view="servers">← <span>All servers</span></button>
+          <div class="server-identity">
+            <div class="server-avatar">▣</div>
+            <div class="server-identity-copy"><strong>${esc(server.name)}</strong><small>${esc(state.eggs[server.egg_id]?.name || server.egg_id)} · ${esc(server.version)}</small></div>
+          </div>
+          <div class="server-nav-label">SERVER MANAGEMENT</div>
+          <nav class="server-nav">
+            ${tabs.map(([id, icon, label]) => `<button class="${state.tab === id ? 'active' : ''}" data-tab="${id}"><span class="server-nav-icon">${icon}</span><span>${label}</span>${state.tab === id ? '<i></i>' : ''}</button>`).join('')}
+          </nav>
+          <div class="server-sidebar-bottom">${statusBadge(state.live?.status || server.status)}<small>PORT ${esc(server.port)}</small></div>
+        </aside>
+        <div class="server-workspace-main">
+          <div class="server-workspace-top">
+            <div class="server-breadcrumb"><button data-view="servers">Servers</button><span>/</span><strong>${esc(server.name)}</strong><span>/</span><strong>${tabs.find(([id]) => id === state.tab)?.[2] || 'Overview'}</strong></div>
+            <div class="inline-actions"><button class="btn small ghost" data-action="refresh">↻ Refresh</button>${server.canManage && state.user.role === 'admin' ? '<button class="btn small danger" data-action="delete-server">Delete server</button>' : ''}</div>
+          </div>
+          <div class="server-workspace-content">
+            ${state.tab === 'overview' ? renderServerOverview(server) : ''}
+            ${state.tab === 'console' ? renderConsole() : ''}
+            ${state.tab === 'files' ? renderFiles() : ''}
+            ${state.tab === 'backups' ? renderBackups() : ''}
+            ${state.tab === 'settings' ? renderServerSettings(server) : ''}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderServerSettings(server) {
+    const node = state.nodes.find((item) => item.id === server.node_id);
+    return `
+      ${heading('CONFIGURATION', 'Server settings', 'Manage resource limits, access permissions and instance details.')}
+      <section class="settings-grid">
+        <article class="panel settings-panel">
+          <div class="panel-head"><div><strong>Resource allocation</strong><small class="settings-subtitle">CPU AND MEMORY LIMITS</small></div><span class="settings-icon">▥</span></div>
+          <div class="settings-values"><div><small>Memory limit</small><strong>${esc(server.memory_mb)} <span>MB</span></strong></div><div><small>CPU cores</small><strong>${esc(server.cpu_cores)}</strong></div></div>
+          <p class="help">These limits are applied to the Docker container. Changes affect the running container configuration.</p>
+          ${server.canManage && state.user.role === 'admin' ? '<button class="btn" data-action="edit-resources">Adjust resources</button>' : '<p class="help">Only an administrator can change resource allocation.</p>'}
+        </article>
+        <article class="panel settings-panel">
+          <div class="panel-head"><div><strong>Server access</strong><small class="settings-subtitle">TEAM PERMISSIONS</small></div><span class="settings-icon">♙</span></div>
+          <p class="help">Control which panel users can view or operate this server.</p>
+          ${server.canManage && state.user.role === 'admin' ? '<button class="btn" data-action="manage-access">Manage user access</button>' : '<p class="help">You do not have permission to manage access.</p>'}
+        </article>
+        <article class="panel settings-panel">
+          <div class="panel-head"><div><strong>Instance information</strong><small class="settings-subtitle">IDENTITY AND NETWORK</small></div><span class="settings-icon">ⓘ</span></div>
+          <div class="settings-detail"><span>Server ID</span><code>${esc(server.id)}</code></div>
+          <div class="settings-detail"><span>Software</span><strong>${esc(state.eggs[server.egg_id]?.name || server.egg_id)}</strong></div>
+          <div class="settings-detail"><span>Minecraft version</span><strong>${esc(server.version)}</strong></div>
+          <div class="settings-detail"><span>Allocation port</span><strong>${esc(server.port)}</strong></div>
+          <div class="settings-detail"><span>Node</span><strong>${esc(node?.name || 'Registered node')}</strong></div>
+          <div class="settings-detail"><span>Created</span><strong>${esc(dateText(server.created_at))}</strong></div>
+        </article>
+        <article class="panel settings-panel settings-danger">
+          <div class="panel-head"><div><strong>Danger zone</strong><small class="settings-subtitle">IRREVERSIBLE ACTIONS</small></div><span class="settings-icon">⚠</span></div>
+          <p class="help">Deleting the server removes its container and panel record. Server files are retained on the node host and are not automatically erased.</p>
+          ${server.canManage && state.user.role === 'admin' ? '<button class="btn danger" data-action="delete-server">Delete server instance</button>' : '<p class="help">Only an administrator can delete this server.</p>'}
+        </article>
+      </section>
     `;
   }
 
