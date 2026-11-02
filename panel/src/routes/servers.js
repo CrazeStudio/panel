@@ -35,6 +35,15 @@ function getServer(db, id) {
   return db.prepare('SELECT * FROM servers WHERE id = ?').get(id);
 }
 
+function eggProtocol(eggId) {
+  return eggs[eggId]?.containerPort?.split('/')[1]?.toLowerCase() || 'tcp';
+}
+
+function hasPortConflict(existingServers, requestedEggId) {
+  const requestedProtocol = eggProtocol(requestedEggId);
+  return existingServers.some((server) => eggProtocol(server.egg_id) === requestedProtocol);
+}
+
 function createServersRouter(db) {
   const router = express.Router();
 
@@ -82,6 +91,15 @@ function createServersRouter(db) {
 
     const node = db.prepare('SELECT id FROM nodes WHERE id = ?').get(nodeId);
     if (!node) return res.status(404).json({ error: 'Node not found.' });
+
+    const occupiedPorts = db.prepare(
+      'SELECT id, egg_id FROM servers WHERE node_id = ? AND port = ?'
+    ).all(nodeId, port);
+    if (hasPortConflict(occupiedPorts, eggId)) {
+      return res.status(409).json({
+        error: `Port ${port}/${eggProtocol(eggId)} is already assigned to another server on this node.`,
+      });
+    }
 
     const id = crypto.randomUUID();
     const provisioned = await agentRequest(db, nodeId, '/api/servers', {
@@ -311,4 +329,4 @@ function createServersRouter(db) {
   return router;
 }
 
-module.exports = { createServersRouter, canAccess };
+module.exports = { createServersRouter, canAccess, hasPortConflict };
