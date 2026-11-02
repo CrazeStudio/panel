@@ -5,6 +5,9 @@ const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const helmet = require('helmet');
 const crypto = require('crypto');
+const https = require('https');
+const dns = require('dns').promises;
+const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -204,6 +207,66 @@ app.post('/api/servers/:id/upload', requireAuth, async (req, res) => {
     if (res.headersSent || res.destroyed) return;
     const status = /64 MB limit/.test(error.message) ? 413 : 400;
     return res.status(status).json({ error: error.message || 'Upload failed.' });
+  }
+});
+async function downloadRemoteFile(rawUrl, destination, maxBytes) {
+  const parsed = new URL(rawUrl);
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || (parsed.port && parsed.port !== '443')) throw new Error('Only public HTTPS download links on port 443 are allowed.');
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!hostname || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) throw new Error('Private or local hosts are not allowed.');
+  const addresses = net.isIP(hostname) ? [{ address: hostname, family: net.isIP(hostname) }] : await dns.lookup(hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(x => {
+    const a = x.address.toLowerCase();
+    if (x.family === 4) { const p = a.split('.').map(Number); return p[0] === 10 || p[0] === 127 || p[0] === 0 || (p[0] === 169 && p[1] === 254) || (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || (p[0] === 192 && p[1] === 168) || (p[0] === 100 && p[1] >= 64 && p[1] <= 127) || p[0] >= 224; }
+    return a === '::1' || a === '::' || a.startsWith('fc') || a.startsWith('fd') || a.startsWith('fe80:') || a.startsWith('::ffff:127.') || a.startsWith('::ffff:10.') || a.startsWith('::ffff:192.168.');
+  })) throw new Error('The download link resolves to a private or restricted address.');
+  return await new Promise((resolve, reject) => {
+    const lookup = (_host, options, callback) => {
+      if (options && options.all) return callback(null, addresses);
+      callback(null, addresses[0].address, addresses[0].family);
+    };
+    const request = https.get(parsed, { lookup, timeout: 20000, headers: { 'User-Agent': 'BlockPanel/1.0' } }, response => {
+      if ([301,302,303,307,308].includes(response.statusCode)) {
+        const location = response.headers.location; response.resume();
+        if (!location) return reject(new Error('Download redirect did not include a location.'));
+        const next = new URL(location, parsed).toString();
+        if (destination.__redirects >= 3) return reject(new Error('Too many download redirects.'));
+        const opts = { ...destination, __redirects: (destination.__redirects || 0) + 1 };
+        return downloadRemoteFile(next, opts.path, maxBytes).then(resolve, reject);
+      }
+      if (response.statusCode !== 200) { response.resume(); return reject(new Error('Remote server returned HTTP ' + response.statusCode + '.')); }
+      const declared = Number(response.headers['content-length'] || 0);
+      if (declared > maxBytes) { response.destroy(); return reject(new Error('Remote file exceeds the 64 MB limit.')); }
+      let size = 0;
+      const limiter = new (require('stream').Transform)({ transform(chunk, enc, cb) { size += chunk.length; if (size > maxBytes) return cb(new Error('Remote file exceeds the 64 MB limit.')); cb(null, chunk); } });
+      require('stream/promises').pipeline(response, limiter, fs.createWriteStream(destination, { flags: 'wx', mode: 0o600 })).then(() => resolve(size), reject);
+    });
+    request.setTimeout(20000, () => request.destroy(new Error('Remote download timed out.')));
+    request.on('error', reject);
+  });
+}
+app.post('/api/servers/:id/download-url', requireAuth, async (req, res) => {
+  const server = getServer(req.params.id, res);
+  if (!server) return;
+  const MAX_DOWNLOAD = 64 * 1024 * 1024;
+  let temporary = null;
+  try {
+    const rawUrl = req.body?.url;
+    const folder = typeof req.body?.path === 'string' ? req.body.path : '';
+    if (typeof rawUrl !== 'string' || rawUrl.length > 4096) return res.status(400).json({ error: 'Enter a valid HTTPS download URL.' });
+    const parsed = new URL(rawUrl);
+    let filename = typeof req.body?.filename === 'string' ? req.body.filename.trim() : path.basename(decodeURIComponent(parsed.pathname));
+    if (!filename || filename.length > 255 || filename.startsWith('.') || /[\\\\/\\x00-\\x1f\\x7f]/.test(filename) || filename === '.' || filename === '..') return res.status(400).json({ error: 'Enter a valid filename.' });
+    const target = safeFile(server, [folder, filename].filter(Boolean).join('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+    temporary = path.join(path.dirname(target), '.download-' + crypto.randomBytes(12).toString('hex') + '.tmp');
+    const size = await downloadRemoteFile(rawUrl, temporary, MAX_DOWNLOAD);
+    fs.renameSync(temporary, target);
+    temporary = null;
+    return res.status(201).json({ ok: true, filename, size });
+  } catch (error) {
+    if (temporary) { try { fs.rmSync(temporary, { force: true }); } catch {} }
+    return res.status(400).json({ error: error.message || 'Remote download failed.' });
   }
 });
 app.get('/api/servers/:id/download', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; try { const p = safeFile(s, req.query.path); if (!fs.statSync(p).isFile()) return res.status(400).json({ error: 'Not a file' }); res.download(p, path.basename(p)); } catch(e) { res.status(400).json({ error: e.message }); } });
