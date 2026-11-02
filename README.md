@@ -4,13 +4,16 @@ A self-hosted control panel for local Minecraft Java Edition server processes. N
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 22 LTS (recommended; Node.js 22–24 supported)
+- npm 10 or newer (the project pins `node-gyp` 12 for modern Python compatibility)
 - Java installed on the host (Java version depends on the Minecraft server version)
 - A Minecraft Java server jar, such as Paper or the official server jar
 
 ## Run
 
 ```sh
+nvm install 22
+nvm use 22
 npm install
 npm start
 ```
@@ -24,6 +27,10 @@ JAVA_BIN=/path/to/java npm start
 ```
 
 Set `PORT` to change the web port. `DATA_DIR` changes where the database, session store, session secret, and server directories are kept. When deploying behind HTTPS, set `NODE_ENV=production`; configure the reverse proxy to forward the original protocol and restrict access to the panel.
+
+## Native SQLite build troubleshooting
+
+The panel uses `better-sqlite3`, a native Node.js module. The project pins `better-sqlite3` 13.0.3 and `node-gyp` 12.x so installation does not rely on the obsolete `node-gyp` 8 toolchain. `node-gyp` 10 or newer is required when using Python 3.12 or later. If your environment still selects an old global Python/build tool, run `npm install` again after switching to Node.js 22 and ensure the project-local `node-gyp` is installed. Do not downgrade Python as the primary fix.
 
 ## Add a server
 
