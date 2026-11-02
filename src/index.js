@@ -209,7 +209,7 @@ app.post('/api/servers/:id/upload', requireAuth, async (req, res) => {
     return res.status(status).json({ error: error.message || 'Upload failed.' });
   }
 });
-async function downloadRemoteFile(rawUrl, destination, maxBytes) {
+async function downloadRemoteFile(rawUrl, destination, maxBytes, redirects = 0) {
   const parsed = new URL(rawUrl);
   if (parsed.protocol !== 'https:' || parsed.username || parsed.password || (parsed.port && parsed.port !== '443')) throw new Error('Only public HTTPS download links on port 443 are allowed.');
   const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
@@ -230,9 +230,8 @@ async function downloadRemoteFile(rawUrl, destination, maxBytes) {
         const location = response.headers.location; response.resume();
         if (!location) return reject(new Error('Download redirect did not include a location.'));
         const next = new URL(location, parsed).toString();
-        if (destination.__redirects >= 3) return reject(new Error('Too many download redirects.'));
-        const opts = { ...destination, __redirects: (destination.__redirects || 0) + 1 };
-        return downloadRemoteFile(next, opts.path, maxBytes).then(resolve, reject);
+        if (redirects >= 3) return reject(new Error('Too many download redirects.'));
+        return downloadRemoteFile(next, destination, maxBytes, redirects + 1).then(resolve, reject);
       }
       if (response.statusCode !== 200) { response.resume(); return reject(new Error('Remote server returned HTTP ' + response.statusCode + '.')); }
       const declared = Number(response.headers['content-length'] || 0);
