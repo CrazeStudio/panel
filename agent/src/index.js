@@ -263,7 +263,21 @@ app.get('/api/servers/:id/file', async (req, res, next) => {
   }
 });
 
-app.get('/api/servers/:id/download', async (req, res, next) => {\n  try {\n    const relative = String(req.query.path || '');\n    if (!relative) return res.status(400).json({ error: 'File path is required.' });\n    const file = resolveInside(serverDirectory(req.params.id), relative);\n    const stat = await fs.promises.stat(file);\n    if (!stat.isFile()) return res.status(400).json({ error: 'Only regular files can be downloaded.' });\n    if (stat.size > 64 * 1024 * 1024) return res.status(413).json({ error: 'Download limit is 64 MB.' });\n    const content = await fs.promises.readFile(file);\n    res.json({ name: path.basename(file), size: content.length, contentBase64: content.toString('base64') });\n  } catch (error) {\n    next(error);\n  }\n});\napp.put('/api/servers/:id/file', async (req, res, next) => {
+app.get('/api/servers/:id/download', async (req, res, next) => {
+  try {
+    const relative = String(req.query.path || '');
+    if (!relative) return res.status(400).json({ error: 'File path is required.' });
+    const file = resolveInside(serverDirectory(req.params.id), relative);
+    const stat = await fs.promises.stat(file);
+    if (!stat.isFile()) return res.status(400).json({ error: 'Only regular files can be downloaded.' });
+    if (stat.size > 64 * 1024 * 1024) return res.status(413).json({ error: 'Download limit is 64 MB.' });
+    const content = await fs.promises.readFile(file);
+    res.json({ name: path.basename(file), size: content.length, contentBase64: content.toString('base64') });
+  } catch (error) {
+    next(error);
+  }
+});
+app.put('/api/servers/:id/file', async (req, res, next) => {
   try {
     const relative = String(req.body?.path || '');
     if (!relative) return res.status(400).json({ error: 'File path is required.' });
