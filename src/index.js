@@ -321,6 +321,68 @@ app.post('/api/servers/:id/command', requireAuth, (req, res) => {
   if (typeof command !== 'string' || !command.trim() || command.length > 200 || /[\r\n\x00]/.test(command)) return res.status(400).json({ error: 'Enter a single command up to 200 characters.' });
   p.child.stdin.write(command.trim() + '\n'); logLine(id, `> ${command.trim()}`); res.json({ ok: true });
 });
+
+function httpsJson(url) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { timeout: 15000, headers: { 'User-Agent': 'BlockPanel/1.0', Accept: 'application/json' } }, response => {
+      if ([301,302,303,307,308].includes(response.statusCode)) { response.resume(); return reject(new Error('Unexpected redirect from trusted software API.')); }
+      if (response.statusCode !== 200) { response.resume(); return reject(new Error('Software API returned HTTP ' + response.statusCode)); }
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; if (body.length > 2 * 1024 * 1024) request.destroy(new Error('Software API response is too large.')); });
+      response.on('end', () => { try { resolve(JSON.parse(body)); } catch { reject(new Error('Software API returned invalid JSON.')); } });
+    });
+    request.setTimeout(15000, () => request.destroy(new Error('Software API timed out.')));
+    request.on('error', reject);
+  });
+}
+app.get('/api/eggs', requireAuth, (_req, res) => res.json([
+  { id: 'paper', name: 'Paper', description: 'High-performance Minecraft Java server with plugin support.', category: 'Minecraft Java', recommended: true },
+  { id: 'vanilla', name: 'Vanilla', description: 'Official Minecraft Java server without third-party modifications.', category: 'Minecraft Java' },
+  { id: 'purpur', name: 'Purpur', description: 'Configurable Paper fork with additional gameplay options.', category: 'Minecraft Java' }
+]));
+app.get('/api/java/status', requireAuth, (_req, res) => {
+  const child = spawn(process.env.JAVA_BIN || 'java', ['-version'], { stdio: ['ignore','pipe','pipe'] });
+  let output = '';
+  child.stdout.on('data', c => output += c.toString());
+  child.stderr.on('data', c => output += c.toString());
+  child.on('error', () => res.json({ installed: false, version: null }));
+  child.on('close', code => {
+    const match = output.match(/version "([^"]+)"/);
+    res.json({ installed: code === 0, version: match?.[1] || null, executable: process.env.JAVA_BIN || 'java' });
+  });
+});
+app.post('/api/servers/:id/install-paper', requireAuth, async (req, res) => {
+  const server = getServer(req.params.id, res);
+  if (!server) return;
+  if (processes.get(server.id)?.child.exitCode === null) return res.status(409).json({ error: 'Stop the server before installing server software.' });
+  let temporary = null;
+  try {
+    const version = typeof req.body?.version === 'string' ? req.body.version.trim() : '';
+    const versions = await httpsJson('https://api.papermc.io/v2/projects/paper');
+    const selected = version || versions.versions?.[versions.versions.length - 1];
+    if (!selected || !versions.versions?.includes(selected)) return res.status(400).json({ error: 'Choose a Minecraft version supported by Paper.' });
+    const builds = await httpsJson('https://api.papermc.io/v2/projects/paper/versions/' + encodeURIComponent(selected));
+    const build = builds.builds?.[builds.builds.length - 1];
+    if (!Number.isInteger(build)) return res.status(502).json({ error: 'Paper has no available build for this version.' });
+    const metadata = await httpsJson('https://api.papermc.io/v2/projects/paper/versions/' + encodeURIComponent(selected) + '/builds/' + build);
+    const file = metadata.downloads?.application?.name;
+    if (!file || !/^[\w.-]+\.jar$/i.test(file)) return res.status(502).json({ error: 'Paper did not provide a valid server jar.' });
+    const directory = serverDir(server);
+    temporary = path.join(directory, '.paper-' + crypto.randomBytes(8).toString('hex') + '.tmp');
+    const url = 'https://api.papermc.io/v2/projects/paper/versions/' + encodeURIComponent(selected) + '/builds/' + build + '/downloads/' + encodeURIComponent(file);
+    const size = await downloadRemoteFile(url, temporary, 256 * 1024 * 1024);
+    const target = path.join(directory, 'server.jar');
+    fs.renameSync(temporary, target);
+    temporary = null;
+    db.prepare('UPDATE servers SET jar=? WHERE id=?').run('server.jar', server.id);
+    return res.json({ ok: true, software: 'Paper', version: selected, build, filename: 'server.jar', size });
+  } catch (error) {
+    if (temporary) { try { fs.rmSync(temporary, { force: true }); } catch {} }
+    return res.status(502).json({ error: error.message || 'Paper installation failed.' });
+  }
+});
+
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found. The backend may be outdated; pull the latest main branch and restart the panel.' }));
 app.get('*', (_req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
 const port = Number(process.env.PORT || 3000);
