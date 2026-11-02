@@ -183,6 +183,13 @@ function createServersRouter(db) {
     res.json(await agentRequest(db, server.node_id, `/api/servers/${server.id}/files?${query}`));
   }));
 
+  router.get('/:id/download', asyncRoute(async (req, res) => {
+    const server = getServer(db, req.params.id);
+    if (!server) return res.status(404).json({ error: 'Server not found.' });
+    if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
+    const query = new URLSearchParams({ path: String(req.query.path || '') });
+    res.json(await agentRequest(db, server.node_id, `/api/servers/${server.id}/download?${query}`));
+  }));
   router.get('/:id/file', asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
     if (!server) return res.status(404).json({ error: 'Server not found.' });
