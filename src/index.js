@@ -448,6 +448,41 @@ app.post('/api/servers/:id/install-paper', requireAuth, async (req, res) => {
   }
 });
 
+
+app.post('/api/servers/:id/install-software', requireAdmin, async (req,res)=>{
+ const server=getServer(req.params.id,res);if(!server)return;
+ if(processes.get(server.id)?.child.exitCode===null)return res.status(409).json({error:'Stop the server before installing software.'});
+ const software=req.body?.software;
+ const version=typeof req.body?.version==='string'?req.body.version.trim():'';
+ let url,selected=version,build='latest';
+ try{
+  if(software==='purpur'){
+   const catalog=await httpsJson('https://api.purpurmc.org/v2/purpur');
+   selected=version||catalog.versions?.[catalog.versions.length-1];
+   if(!selected||!catalog.versions?.includes(selected))return res.status(400).json({error:'Choose a Minecraft version supported by Purpur.'});
+   const builds=await httpsJson('https://api.purpurmc.org/v2/purpur/'+encodeURIComponent(selected));
+   build=String(builds.builds?.latest||'');
+   if(!build)return res.status(502).json({error:'Purpur did not return a latest build.'});
+   url='https://api.purpurmc.org/v2/purpur/'+encodeURIComponent(selected)+'/'+encodeURIComponent(build)+'/download';
+  }else if(software==='vanilla'){
+   const catalog=await httpsJson('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json');
+   const release=catalog.versions?.find(v=>v.id===version&&v.type==='release');
+   if(!release)return res.status(400).json({error:'Choose an official Minecraft release version.'});
+   const metadata=await httpsJson(release.url);
+   url=metadata.downloads?.server?.url;
+   if(!url||!url.startsWith('https://piston-data.mojang.com/'))return res.status(502).json({error:'Official server download was not available.'});
+   selected=release.id;build='official';
+  }else return res.status(400).json({error:'Unknown server software.'});
+  const dir=serverDir(server),temporary=path.join(dir,'.software-'+crypto.randomBytes(10).toString('hex')+'.tmp');
+  try{
+   const size=await downloadRemoteFile(url,temporary,256*1024*1024);
+   fs.renameSync(temporary,path.join(dir,'server.jar'));
+   db.prepare('UPDATE servers SET jar=? WHERE id=?').run('server.jar',server.id);
+   return res.json({ok:true,software,version:selected,build,filename:'server.jar',size});
+  }catch(error){fs.rmSync(temporary,{force:true});throw error;}
+ }catch(error){return res.status(502).json({error:error.message||'Software installation failed.'})}
+});
+
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found. The backend may be outdated; pull the latest main branch and restart the panel.' }));
 app.get('*', (_req, res) => res.sendFile(path.join(ROOT, 'public', 'index.html')));
 const port = Number(process.env.PORT || 3000);
