@@ -4,7 +4,14 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 async function api(url, options = {}) {
   const headers = { ...(options.body ? {'Content-Type':'application/json'} : {}), ...(state.csrf && options.method && options.method !== 'GET' ? {'X-CSRF-Token':state.csrf} : {}), ...(options.headers || {}) };
   const r = await fetch('/api' + url, { ...options, headers, credentials:'same-origin' });
-  const data = await r.json().catch(() => ({}));
+  const raw = await r.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; }
+  catch {
+    const type = r.headers.get('content-type') || 'unknown';
+    const preview = raw.replace(/\\s+/g, ' ').slice(0, 140);
+    throw new Error(`API returned non-JSON response (${r.status}, ${type}). Check that the latest backend is running. ${preview}`);
+  }
   if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
   return data;
 }
