@@ -44,7 +44,7 @@ Each Java process receives only the panel's fixed memory arguments and the confi
 
 ## Security and operations
 
-- The first account is the initial administrator. Administrators can create panel users, assign user/admin roles, and remove accounts from **Admin → Panel users**. Users can update their own password in **User settings**. Existing sessions created before the role update should sign out and sign in again.
+- The first account is the initial administrator. Administrators can create panel users, assign user/admin roles, and remove accounts from **Admin → Panel users**. Users can update their own password in **User settings**. Standard users can access and operate the configured server instances; only administrators can create, edit, delete, install server software, manage panel users, or install Java. Existing sessions created before the role update should sign out and sign in again.
 - Keep the panel on a trusted network or put it behind HTTPS and an access controlled reverse proxy before exposing it publicly.
 - Back up the full `data/` directory while the panel is stopped to preserve settings, credentials, sessions, and server files.
 - Deleting an instance removes its database entry and console history. It intentionally leaves the server directory on disk.
