@@ -206,7 +206,7 @@ app.post('/api/servers/:id/upload', requireAuth, async (req, res) => {
   try {
     const name = decodeURIComponent(req.get('x-file-name') || '');
     const uploadPath = decodeURIComponent(req.get('x-file-path') || '');
-    if (!name || name.length > 255 || name === '.' || name === '..' || name.startsWith('.') || /[\\\\/\\x00-\\x1f\\x7f]/.test(name)) {
+    if (!name || name.length > 255 || name === '.' || name === '..' || name.startsWith('.') || name.includes('/') || name.includes('\\') || name.split('').some(ch => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) {
       return res.status(400).json({ error: 'Invalid filename. Hidden files and path separators are not allowed.' });
     }
     const declaredLength = Number(req.get('content-length') || 0);
@@ -279,7 +279,7 @@ app.post('/api/servers/:id/download-url', requireAuth, async (req, res) => {
     if (typeof rawUrl !== 'string' || rawUrl.length > 4096) return res.status(400).json({ error: 'Enter a valid HTTPS download URL.' });
     const parsed = new URL(rawUrl);
     let filename = typeof req.body?.filename === 'string' ? req.body.filename.trim() : path.basename(decodeURIComponent(parsed.pathname));
-    if (!filename || filename.length > 255 || filename.startsWith('.') || /[\\\\/\\x00-\\x1f\\x7f]/.test(filename) || filename === '.' || filename === '..') return res.status(400).json({ error: 'Enter a valid filename.' });
+    if (!filename || filename.length > 255 || filename.startsWith('.') || filename === '.' || filename === '..' || filename.includes('/') || filename.includes('\\') || filename.split('').some(ch => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) return res.status(400).json({ error: 'Enter a valid filename.' });
     const target = safeFile(server, [folder, filename].filter(Boolean).join('/'));
     fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
     temporary = path.join(path.dirname(target), '.download-' + crypto.randomBytes(12).toString('hex') + '.tmp');
