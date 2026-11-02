@@ -448,13 +448,14 @@
 
   function renderServerOverview(server) {
     const stats = state.live?.stats;
+    const currentStatus = state.live?.status || server.status;
     return `
       <div class="page-heading">
-        <div><div class="kicker">LIVE CONTAINER STATE</div><div>${statusBadge(state.live?.status || server.status)}</div></div>
+        <div><div class="kicker">LIVE CONTAINER STATE</div><div>${statusBadge(currentStatus)}</div></div>
         <div class="heading-actions">
-          <button class="btn primary" data-power="start" ${!server.canOperate || state.live?.status === 'running' ? 'disabled' : ''}>Start</button>
-          <button class="btn" data-power="restart" ${!server.canOperate || state.live?.status !== 'running' ? 'disabled' : ''}>Restart</button>
-          <button class="btn danger" data-power="stop" ${!server.canOperate || state.live?.status !== 'running' ? 'disabled' : ''}>Stop</button>
+          <button class="btn primary" data-power="start" ${!server.canOperate || currentStatus === 'running' ? 'disabled' : ''}>Start</button>
+          <button class="btn" data-power="restart" ${!server.canOperate || currentStatus !== 'running' ? 'disabled' : ''}>Restart</button>
+          <button class="btn danger" data-power="stop" ${!server.canOperate || currentStatus !== 'running' ? 'disabled' : ''}>Stop</button>
         </div>
       </div>
       <section class="resource-grid">
