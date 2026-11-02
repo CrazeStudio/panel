@@ -37,8 +37,29 @@ function createAuthRouter(db) {
 
     const hash = await bcrypt.hash(password, 12);
     const id = crypto.randomUUID();
-    db.prepare('INSERT INTO users (id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)')
-      .run(id, username, email || null, hash, 'admin');
+    const createFirstAdmin = db.transaction(() => {
+      const currentUsers = db.prepare('SELECT COUNT(*) AS total FROM users').get().total;
+      if (currentUsers !== 0) {
+        const error = new Error('Initial setup has already been completed.');
+        error.code = 'SETUP_ALREADY_COMPLETED';
+        throw error;
+      }
+
+      db.prepare('INSERT INTO users (id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)')
+        .run(id, username, email || null, hash, 'admin');
+    });
+
+    try {
+      createFirstAdmin.immediate();
+    } catch (error) {
+      if (error.code === 'SETUP_ALREADY_COMPLETED') {
+        return res.status(409).json({ error: error.message });
+      }
+      if (String(error.code || '').startsWith('SQLITE_CONSTRAINT')) {
+        return res.status(409).json({ error: 'That username is already in use.' });
+      }
+      throw error;
+    }
 
     req.session.regenerate((error) => {
       if (error) return res.status(500).json({ error: 'Could not create a secure session.' });
