@@ -133,7 +133,7 @@ app.get('/api/servers', async (_req, res, next) => {
     res.json({
       servers: containers.map((item) => ({
         id: item.Labels?.['io.crazepanel.server-id'],
-        name: item.Names?.[0]?.replace(/^\\//, ''),
+        name: item.Names?.[0]?.replace(/^\//, ''),
         status: item.State,
         image: item.Image,
       })),
