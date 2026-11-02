@@ -144,7 +144,7 @@ function startServer(id) {
   if (!jarPath.startsWith(dir + path.sep) || !fs.existsSync(jarPath)) throw new Error(`Place ${server.jar} in this server's directory first.`);
   const child = spawn(process.env.JAVA_BIN || 'java', [`-Xms${server.min_memory}M`, `-Xmx${server.max_memory}M`, '-jar', jarPath, 'nogui'], { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, LANG: 'C.UTF-8' } });
   const entry = { child, startedAt: new Date().toISOString(), players: '—' }; processes.set(id, entry);
-  const consume = (stream, prefix = '') => { let data = ''; stream.on('data', chunk => { data += chunk.toString(); const rows = data.split(/\r?\n/); data = rows.pop() || ''; for (const row of rows) { if (!row.trim()) continue; logLine(id, prefix + row); const m = row.match(/There are (\d+) of a max of (\d+) players online/); if (m) entry.players = `${m[1]} / ${m[2]}`; } }); stream.on('end', () => { if (data.trim()) logLine(id, prefix + data); }); };
+  const consume = (stream, prefix = '') => { let data = ''; stream.on('data', chunk => { data += chunk.toString(); const rows = data.split(/[\r\n]+/); data = rows.pop() || ''; for (const row of rows) { if (!row.trim()) continue; logLine(id, prefix + row); const m = row.match(/There are (\d+) of a max of (\d+) players online/); if (m) entry.players = `${m[1]} / ${m[2]}`; } }); stream.on('end', () => { if (data.trim()) logLine(id, prefix + data); }); };
   consume(child.stdout); consume(child.stderr, '[err] ');
   child.on('error', err => logLine(id, `Panel: failed to launch Java: ${err.message}`));
   child.on('close', code => { entry.players = '—'; logLine(id, `Panel: process exited (code ${code})`); });
