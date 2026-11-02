@@ -985,10 +985,6 @@ AGENT_PORT=8080</pre>
         closeModal();
         return;
       }
-      if (action === 'backdrop-close') {
-        if (button.target === button.currentTarget) closeModal();
-        return;
-      }
       if (action === 'new-server') return newServerModal();
       if (action === 'new-node') return newNodeModal();
       if (action === 'new-user') return newUserModal();
@@ -1232,7 +1228,13 @@ AGENT_PORT=8080</pre>
     }
 
     const actionButton = event.target.closest('[data-action]');
-    if (actionButton) await action(actionButton.dataset.action, actionButton);
+    if (actionButton) {
+      if (actionButton.dataset.action === 'backdrop-close') {
+        if (event.target === actionButton) closeModal();
+        return;
+      }
+      await action(actionButton.dataset.action, actionButton);
+    }
   }
 
   async function handleConsoleSubmit(event) {
