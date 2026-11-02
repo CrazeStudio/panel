@@ -1,0 +1,21 @@
+[Unit]
+Description=CrazePanel Web Panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=crazepanel
+Group=crazepanel
+WorkingDirectory=/opt/crazepanel
+EnvironmentFile=/etc/crazepanel/panel.env
+ExecStart=/usr/bin/node /opt/crazepanel/panel/src/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/crazepanel
+
+[Install]
+WantedBy=multi-user.target

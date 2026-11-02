@@ -1,0 +1,36 @@
+name: CrazePanel checks
+
+on:
+  push:
+    branches:
+      - main
+      - crazepanel-v2-rebuild
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install workspace dependencies
+        run: npm install
+
+      - name: Report dependency advisories
+        run: |
+          npm audit --json > /tmp/crazepanel-audit.json || true
+          node -e "const a=require('/tmp/crazepanel-audit.json'); console.log('Advisory totals:', JSON.stringify(a.metadata?.vulnerabilities)); for (const [name, item] of Object.entries(a.vulnerabilities || {})) console.log(name, item.severity, 'fix=' + JSON.stringify(item.fixAvailable), 'via=' + item.via.map(x => typeof x === 'string' ? x : x.title).join(' | '));"
+
+      - name: Check Node.js syntax
+        run: npm run check
+
+      - name: Run automated tests
+        run: npm test
