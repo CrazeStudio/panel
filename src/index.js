@@ -176,8 +176,22 @@ function safeFile(server, relative = '') {
 }
 app.get('/api/servers/:id/files', requireAuth, (req, res) => {
   const s = getServer(req.params.id, res); if (!s) return;
-  try { const dir = safeFile(s, req.query.path || ''); const entries = fs.readdirSync(dir, { withFileTypes: true }).filter(e => !e.name.startsWith('.')).map(e => { const p = path.join(dir, e.name); const st = fs.lstatSync(p); if (st.isSymbolicLink()) return null; if (!st.isDirectory() && !st.isFile()) return null; return { name: e.name, type: st.isDirectory() ? 'directory' : 'file', size: st.size, modifiedAt: st.mtime.toISOString() }; }).filter(Boolean).sort((a,b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1); res.json({ path: req.query.path || '', entries }); }
-  catch (e) { res.status(400).json({ error: e.message }); }
+  try {
+    const relative = typeof req.query.path === 'string' ? req.query.path : '';
+    const dir = safeFile(s, relative);
+    if (!fs.existsSync(dir)) return res.status(404).json({ error: 'Folder does not exist.' });
+    const dirStat = fs.lstatSync(dir);
+    if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) return res.status(400).json({ error: 'The selected path is not a folder.' });
+    const entries = fs.readdirSync(dir, { withFileTypes: true }).filter(entry => !entry.name.startsWith('.')).map(entry => {
+      const fullPath = path.join(dir, entry.name);
+      const stat = fs.lstatSync(fullPath);
+      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) return null;
+      return { name: entry.name, type: stat.isDirectory() ? 'directory' : 'file', size: stat.size, modifiedAt: stat.mtime.toISOString() };
+    }).filter(Boolean).sort((a, b) => a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'directory' ? -1 : 1);
+    return res.json({ path: relative, entries });
+  } catch (error) {
+    return res.status(400).json({ error: error.message || 'Could not read this folder.' });
+  }
 });
 app.post('/api/servers/:id/directory', requireAuth, (req, res) => {
   const s = getServer(req.params.id, res); if (!s) return;
@@ -187,6 +201,8 @@ app.post('/api/servers/:id/directory', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Enter a valid folder name. Hidden names and path separators are not allowed.' });
   }
   try {
+    const parentDir = safeFile(s, parent);
+    if (!fs.existsSync(parentDir) || !fs.lstatSync(parentDir).isDirectory()) return res.status(400).json({ error: 'The parent folder does not exist.' });
     const target = safeFile(s, [parent, name].filter(Boolean).join('/'));
     if (fs.existsSync(target)) return res.status(409).json({ error: 'A file or folder with that name already exists.' });
     fs.mkdirSync(target, { mode: 0o700 });
@@ -196,7 +212,7 @@ app.post('/api/servers/:id/directory', requireAuth, (req, res) => {
   }
 });
 app.get('/api/servers/:id/file', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; try { const p = safeFile(s, req.query.path); if (!fs.statSync(p).isFile()) return res.status(400).json({ error: 'Not a file' }); if (fs.statSync(p).size > 1024 * 1024) return res.status(413).json({ error: 'Files over 1 MB cannot be edited in the panel' }); res.json({ content: fs.readFileSync(p, 'utf8') }); } catch(e) { res.status(400).json({ error: e.message }); } });
-app.put('/api/servers/:id/file', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; const { path: rel, content } = req.body || {}; if (typeof content !== 'string' || Buffer.byteLength(content) > 1024 * 1024) return res.status(400).json({ error: 'Text files are limited to 1 MB' }); try { const p = safeFile(s, rel); if (fs.existsSync(p) && !fs.statSync(p).isFile()) return res.status(400).json({ error: 'Not a file' }); fs.writeFileSync(p, content, { mode: 0o600 }); res.json({ ok: true }); } catch(e) { res.status(400).json({ error: e.message }); } });
+app.put('/api/servers/:id/file', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; const { path: rel, content } = req.body || {}; if (typeof rel !== 'string' || !rel.trim() || typeof content !== 'string' || Buffer.byteLength(content) > 1024 * 1024) return res.status(400).json({ error: 'A filename is required; text files are limited to 1 MB.' }); try { const p = safeFile(s, rel); const parent = path.dirname(p); if (!fs.existsSync(parent) || !fs.lstatSync(parent).isDirectory()) return res.status(400).json({ error: 'The parent folder does not exist.' }); if (fs.existsSync(p) && (!fs.lstatSync(p).isFile() || fs.lstatSync(p).isSymbolicLink())) return res.status(400).json({ error: 'The target is not a regular file.' }); const temporary = path.join(parent, '.edit-' + crypto.randomBytes(12).toString('hex') + '.tmp'); try { fs.writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 }); fs.renameSync(temporary, p); } finally { if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true }); } return res.json({ ok: true }); } catch(e) { return res.status(400).json({ error: e.message || 'Could not save file.' }); } });
 app.delete('/api/servers/:id/file', requireAuth, (req, res) => { const s = getServer(req.params.id, res); if (!s) return; try { const p = safeFile(s, req.body?.path); if (p === serverDir(s)) return res.status(400).json({ error: 'Cannot remove server root' }); fs.rmSync(p, { recursive: true, force: false }); res.json({ ok: true }); } catch(e) { res.status(400).json({ error: e.message }); } });
 app.post('/api/servers/:id/upload', requireAuth, async (req, res) => {
   const s = getServer(req.params.id, res);
@@ -204,8 +220,9 @@ app.post('/api/servers/:id/upload', requireAuth, async (req, res) => {
   const MAX_UPLOAD = 64 * 1024 * 1024;
   let temporary = null;
   try {
-    const name = decodeURIComponent(req.get('x-file-name') || '');
-    const uploadPath = decodeURIComponent(req.get('x-file-path') || '');
+    let name, uploadPath;
+    try { name = decodeURIComponent(req.get('x-file-name') || ''); uploadPath = decodeURIComponent(req.get('x-file-path') || ''); }
+    catch { return res.status(400).json({ error: 'Invalid encoded filename or folder path.' }); }
     if (!name || name.length > 255 || name === '.' || name === '..' || name.startsWith('.') || name.includes('/') || name.includes('\\') || name.split('').some(ch => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) {
       return res.status(400).json({ error: 'Invalid filename. Hidden files and path separators are not allowed.' });
     }
