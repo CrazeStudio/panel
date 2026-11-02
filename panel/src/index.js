@@ -13,9 +13,12 @@ const { createAuthRouter } = require('./routes/auth');
 const { createNodesRouter } = require('./routes/nodes');
 const { createServersRouter } = require('./routes/servers');
 const { createAdminRouter } = require('./routes/admin');
+const { getKey } = require('./lib/crypto');
+const eggs = require('./lib/eggs');
 
 const config = loadConfig();
 fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
+getKey();
 const db = openDatabase(config.databasePath);
 const app = express();
 
@@ -34,7 +37,7 @@ app.use(helmet({
     },
   },
 }));
-app.use(express.json({ limit: '70mb' }));
+app.use(express.json({ limit: '90mb' }));
 app.use(session({
   name: 'crazepanel.sid',
   store: new SQLiteStore({ db: 'sessions.sqlite', dir: config.dataDir, concurrentDB: true }),
@@ -55,13 +58,13 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/auth', createAuthRouter(db));
-app.use('/api', requireAuth, requireCsrf);
+app.use('/api', requireAuth(db), requireCsrf);
 app.use('/api/nodes', createNodesRouter(db));
 app.use('/api/servers', createServersRouter(db));
 app.use('/api/admin', createAdminRouter(db));
 
 app.get('/api/eggs', (_req, res) => {
-  res.json({ eggs: require('../../eggs/index.json') });
+  res.json({ eggs });
 });
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
