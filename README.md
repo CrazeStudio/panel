@@ -6,7 +6,8 @@ A self-hosted control panel for local Minecraft Java Edition server processes. N
 
 - Node.js 22 LTS (recommended; Node.js 22–24 supported)
 - npm 10 or newer (the project pins `node-gyp` 12 for modern Python compatibility)
-- Java installed on the host (Java version depends on the Minecraft server version)
+- Java installed on the host, or a supported Linux host for the panel-managed Temurin runtime installer
+- `tar` available on Linux when using automatic Java installation
 - A Minecraft Java server jar, such as Paper or the official server jar
 
 ## Run
@@ -20,7 +21,7 @@ npm start
 
 Open `http://localhost:3000` and create the first admin account. Use a password with at least 12 characters. The panel creates `data/panel.sqlite`, `data/sessions.sqlite`, and one `data/servers/server-<id>/` directory for each instance.
 
-If Java is not on `PATH`, set its executable before starting the panel:
+If Java is not on `PATH`, install a panel-managed Temurin JRE from **Admin → Java runtime** (Linux x64/ARM64), or set its executable before starting the panel:
 
 ```sh
 JAVA_BIN=/path/to/java npm start
@@ -43,7 +44,7 @@ Each Java process receives only the panel's fixed memory arguments and the confi
 
 ## Security and operations
 
-- The first account is the only panel account; protect it with a unique password.
+- The first account is the initial administrator. Administrators can create panel users, assign user/admin roles, and remove accounts from **Admin → Panel users**. Users can update their own password in **User settings**. Existing sessions created before the role update should sign out and sign in again.
 - Keep the panel on a trusted network or put it behind HTTPS and an access controlled reverse proxy before exposing it publicly.
 - Back up the full `data/` directory while the panel is stopped to preserve settings, credentials, sessions, and server files.
 - Deleting an instance removes its database entry and console history. It intentionally leaves the server directory on disk.
@@ -53,6 +54,8 @@ Each Java process receives only the panel's fixed memory arguments and the confi
 
 - Secure first-admin setup, sign-in, CSRF protection, and SQLite-backed sessions
 - Multiple managed Java instances with start, graceful stop, restart, memory and port settings
+- Separate server workspaces, administrator/user navigation, role-protected server creation and panel user management
+- Built-in Paper, Purpur and official Vanilla server installers; Java runtime detection and a Linux Temurin JRE installer
 - Live process console with command input and bounded console history
 - Per-instance file browser with upload (64 MB maximum), download, delete, and text editing (1 MB maximum)
 - Local per-instance filesystem backups, with restore available only while the instance is stopped
