@@ -145,8 +145,8 @@ fi
 if [[ -n "$PANEL_DOMAIN" ]]; then
   log "Installing Caddy for automatic HTTPS on $PANEL_DOMAIN."
   apt-get install -y --no-install-recommends debian-keyring debian-archive-keyring apt-transport-https
-  install -d -m 0755 /etc/apt/keyrings
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' -o /etc/apt/keyrings/caddy-stable.asc
+  install -d -m 0755 /usr/share/keyrings
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' -o /etc/apt/sources.list.d/caddy-stable.list
   apt-get update
   apt-get install -y caddy
