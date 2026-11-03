@@ -326,6 +326,17 @@ function createServersRouter(db) {
     res.json(result);
   }));
 
+
+  router.get('/:id/backups/:name/download', asyncRoute(async (req, res) => {
+    const server = getServer(db, req.params.id);
+    if (!server) return res.status(404).json({ error: 'Server not found.' });
+    if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
+    const name = String(req.params.name || '');
+    if (!/^[a-zA-Z0-9_.-]+\\.tar\\.gz$/.test(name)) return res.status(400).json({ error: 'Invalid backup name.' });
+    const result = await agentRequest(db, server.node_id, `/api/servers/${server.id}/backups/${encodeURIComponent(name)}/download`, { timeout: 90000 });
+    res.json(result);
+  }));
+
   return router;
 }
 

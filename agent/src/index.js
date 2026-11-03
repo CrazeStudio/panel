@@ -445,6 +445,28 @@ app.post('/api/servers/:id/backups/restore', async (req, res, next) => {
   }
 });
 
+app.get('/api/servers/:id/backups/:name/download', async (req, res, next) => {
+  try {
+    const serverId = req.params.id;
+    const name = String(req.params.name || '');
+    if (!safeServerId(serverId) || !/^[a-zA-Z0-9_.-]+\\.tar\\.gz$/.test(name)) {
+      return res.status(400).json({ error: 'Invalid backup identifier.' });
+    }
+    const archive = path.join(BACKUP_ROOT, serverId, name);
+    const resolved = path.resolve(archive);
+    const root = path.resolve(BACKUP_ROOT, serverId) + path.sep;
+    if (!resolved.startsWith(root)) return res.status(400).json({ error: 'Invalid backup path.' });
+    const stat = await fs.promises.stat(resolved);
+    if (!stat.isFile()) return res.status(404).json({ error: 'Backup not found.' });
+    if (stat.size > 64 * 1024 * 1024) return res.status(413).json({ error: 'Backup exceeds the 64 MB download limit.' });
+    const content = await fs.promises.readFile(resolved);
+    res.json({ name, size: content.length, contentBase64: content.toString('base64') });
+  } catch (error) {
+    if (error.code === 'ENOENT') return res.status(404).json({ error: 'Backup not found.' });
+    next(error);
+  }
+});
+
 app.delete('/api/servers/:id', async (req, res, next) => {
   try { res.json(await deleteServer(req.params.id)); }
   catch (error) { next(error); }
