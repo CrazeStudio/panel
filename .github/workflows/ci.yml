@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - crazepanel-v2-rebuild
+      - 'release/**'
   pull_request:
     branches:
       - main
@@ -39,3 +40,8 @@ jobs:
           docker build -f panel/Dockerfile -t crazepanel-panel-ci .
           docker build -f agent/Dockerfile -t crazepanel-agent-ci .
           docker run --rm --entrypoint sh crazepanel-agent-ci -c 'command -v tar'
+
+      - name: Validate installer shell syntax
+        run: |
+          bash -n scripts/install-panel.sh
+          bash -n scripts/install-agent.sh
