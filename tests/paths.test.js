@@ -19,13 +19,19 @@ test('rejects parent traversal, absolute paths and hidden paths', () => {
 });
 
 test('rejects symbolic links', (context) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'crazepanel-path-'));
-  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const outside = path.join(root, 'outside');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'crazepanel-path-'));
+  context.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const root = path.join(base, 'server');
+  const outside = path.join(base, 'outside');
   const link = path.join(root, 'server-link');
+  fs.mkdirSync(root);
   fs.mkdirSync(outside);
   fs.symlinkSync(outside, link, 'dir');
   assert.throws(() => resolveInside(root, 'server-link/private.txt'), /Symbolic links/);
+
+  const danglingTarget = path.join(outside, 'not-created.txt');
+  fs.symlinkSync(danglingTarget, path.join(root, 'dangling-link'));
+  assert.throws(() => resolveInside(root, 'dangling-link'), /Symbolic links/);
 });
 
 test('validates UUID-shaped server identifiers', () => {

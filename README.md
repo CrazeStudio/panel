@@ -11,7 +11,7 @@ This repository follows the Node.js / Express / Dockerode architecture used by t
 - Docker-managed Minecraft Java servers: Paper, Purpur, Vanilla, Fabric, Forge and NeoForge; plus Bedrock Dedicated Server.
 - Start, stop, restart and kill actions; live process state and Docker resource metrics.
 - Console logs and command input using the attached container stream.
-- Per-server file listing, text editing, upload, create-folder and delete with path traversal and symlink checks.
+- Per-server file browsing, text-file create/edit, binary upload/download, folder creation, rename and delete with root-confined filesystem operations.
 - Full server directory backups and restore while the server is stopped.
 - Resource limit updates, panel user administration and administrator audit log.
 - Responsive browser UI and a session-authenticated JSON API.
@@ -178,10 +178,12 @@ All panel API writes require the signed-in session and the `X-CSRF-Token` return
 - `POST /api/servers/:id/power/:action`
 - `GET|POST /api/servers/:id/console`
 - `GET /api/servers/:id/files`
+- `GET /api/servers/:id/download`
 - `GET|PUT /api/servers/:id/file`
 - `POST /api/servers/:id/files`
 - `DELETE /api/servers/:id/file`
 - `GET|POST /api/servers/:id/backups`
+- `GET /api/servers/:id/backups/:name/download`
 - `POST /api/servers/:id/backups/restore`
 - `GET|POST /api/admin/users`
 - `PATCH|DELETE /api/admin/users/:id`
@@ -199,10 +201,12 @@ All node-agent endpoints require `Authorization: Bearer NODE_TOKEN`.
 - `PATCH /api/servers/:id/resources`
 - `GET|POST /api/servers/:id/console`
 - `GET /api/servers/:id/files`
+- `GET /api/servers/:id/download`
 - `GET|PUT /api/servers/:id/file`
 - `POST /api/servers/:id/files`
 - `DELETE /api/servers/:id/file`
 - `GET|POST /api/servers/:id/backups`
+- `GET /api/servers/:id/backups/:name/download`
 - `POST /api/servers/:id/backups/restore`
 - `DELETE /api/servers/:id`
 
@@ -214,7 +218,7 @@ node --check panel/src/index.js
 node --check agent/src/index.js
 ```
 
-Automated tests cover path traversal protections, the egg catalogue and node URL validation. A real container lifecycle test requires a Linux host with a running Docker Engine and a configured agent node.
+Automated tests cover server file create/edit/list/upload/download/rename/delete, traversal and symlink confinement, backup download routing, the egg catalogue and node URL validation. A real container lifecycle test requires a Linux host with a running Docker Engine and a configured agent node.
 
 ## Scope and limitations
 
@@ -222,10 +226,10 @@ Automated tests cover path traversal protections, the egg catalogue and node URL
 - The browser displays state and metrics returned by Docker through the agent; it does not invent online or CPU values.
 - The current build targets Minecraft Java and Bedrock. More supported games can be added to the allow-listed egg catalogue and agent provisioning logic.
 - Console input depends on interactive stdin support in the selected container image.
-- File editor limit is 2 MB; file upload limit is 64 MB. Hidden files and symbolic links are blocked by the agent file API.
+- File editor limit is 2 MB; file upload/download limit is 64 MB. Hidden paths and symbolic links are blocked by the agent file API.
 - Full backups use host disk space. Backups should be copied to off-node storage for disaster recovery.
 - Deleting a server removes the Docker container and panel record. Its host data directory is retained; remove it manually only after verifying you no longer need the data.
-- This is the first rebuilt baseline, not a claim of feature parity with mature commercial hosting panels. Advanced scheduling, file download/rename, SFTP, allocations, multi-factor authentication, automated off-site backups and billing are not included in this build.
+- This is the first rebuilt baseline, not a claim of feature parity with mature commercial hosting panels. Advanced scheduling, SFTP, allocations, multi-factor authentication, automated off-site backups and billing are not included in this build.
 
 ## License
 

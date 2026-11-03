@@ -18,8 +18,10 @@ function resolveInside(root, relative = '') {
   let current = base;
   for (const part of parts) {
     current = path.join(current, part);
-    if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink()) {
-      throw new Error('Symbolic links are not accessible.');
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) throw new Error('Symbolic links are not accessible.');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
     }
   }
   if (current !== base && !current.startsWith(base + path.sep)) {

@@ -1,5 +1,27 @@
 (() => {
   const root = document.querySelector('#app');
+  function favoritesStorageKey(owner) {
+    return `crazepanel.server-favorites.v1.${encodeURIComponent(String(owner || 'guest'))}`;
+  }
+
+  function readServerFavorites(owner) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(favoritesStorageKey(owner)) || '[]');
+      return Array.isArray(saved) ? saved.filter((id) => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveServerFavorites() {
+    try {
+      localStorage.setItem(favoritesStorageKey(state.favoriteOwner), JSON.stringify(state.favoriteServers));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   const state = {
     user: null,
     csrfToken: null,
@@ -16,6 +38,11 @@
     filePath: '',
     files: [],
     backups: [],
+    serverSearch: '',
+    serverFilter: 'all',
+    serverSort: 'updated',
+    favoriteServers: [],
+    favoriteOwner: null,
     timer: null,
   };
 
@@ -150,6 +177,17 @@
   async function refreshData() {
     const serversResult = await api('/servers');
     state.servers = serversResult.servers || [];
+    const favoriteOwner = state.user.id || state.user.username;
+    if (state.favoriteOwner !== favoriteOwner) {
+      state.favoriteOwner = favoriteOwner;
+      state.favoriteServers = readServerFavorites(favoriteOwner);
+    }
+    const visibleServerIds = new Set(state.servers.map((server) => server.id));
+    const visibleFavorites = state.favoriteServers.filter((id) => visibleServerIds.has(id));
+    if (visibleFavorites.length !== state.favoriteServers.length) {
+      state.favoriteServers = visibleFavorites;
+      saveServerFavorites();
+    }
 
     if (state.user.role === 'admin') {
       const results = await Promise.all([
@@ -250,6 +288,7 @@
     const admin = state.user.role === 'admin';
     const online = state.servers.filter((server) => server.status === 'running').length;
     const stopped = state.servers.filter((server) => ['stopped', 'exited'].includes(server.status)).length;
+    const attentionServers = state.servers.filter((server) => ['node-offline', 'offline', 'error', 'failed', 'unknown', 'missing'].includes(String(server.status || '').toLowerCase())).length;
     const offlineNodes = admin ? state.nodes.filter((node) => !node.online).length : 0;
     const onlineNodes = admin ? state.nodes.filter((node) => node.online).length : 0;
     const recentServers = state.servers.slice(0, 6);
@@ -279,9 +318,9 @@
           <small>${state.servers.length ? `${Math.round(online / state.servers.length * 100)}% of your instances` : 'Waiting for first server'}</small>
         </article>
         <article class="metric-card">
-          <div class="metric-top"><span>STOPPED / OTHER</span><span class="metric-icon">Ⅱ</span></div>
+          <div class="metric-top"><span>STOPPED SERVERS</span><span class="metric-icon">Ⅱ</span></div>
           <strong>${stopped}</strong>
-          <small>Not currently running</small>
+          <small>Stopped or exited containers</small>
         </article>
         ${admin ? `
           <article class="metric-card">
@@ -350,10 +389,11 @@
             </div>
           </section>
           <section class="dashboard-side-panel dashboard-system-panel">
-            <div class="dashboard-section-heading compact"><div><span class="kicker">PANEL STATUS</span><h2>System overview</h2></div><span class="system-status-dot"></span></div>
+            <div class="dashboard-section-heading compact"><div><span class="kicker">PANEL STATUS</span><h2>System overview</h2></div><span class="system-status-dot ${attentionServers || offlineNodes ? 'has-issues' : 'is-healthy'}" aria-label="${attentionServers || offlineNodes ? 'Infrastructure needs attention' : 'Infrastructure healthy'}"></span></div>
             <div class="system-overview-row"><span>Panel session</span><strong>Active</strong></div>
             <div class="system-overview-row"><span>Connected nodes</span><strong>${admin ? `${onlineNodes} / ${state.nodes.length}` : 'Managed by admin'}</strong></div>
             <div class="system-overview-row"><span>Server workloads</span><strong>${state.servers.length}</strong></div>
+            <div class="system-overview-row"><span>Needs attention</span><strong>${attentionServers}</strong></div>
             <p class="dashboard-disclaimer">Metrics are based on the latest successful node-agent responses. Detailed CPU, memory and network usage is available inside each server workspace.</p>
           </section>
         </aside>
@@ -400,26 +440,131 @@
     </article>`;
   }
   function renderServers() {
+    const counts = {
+      all: state.servers.length,
+      running: state.servers.filter((server) => server.status === 'running').length,
+      stopped: state.servers.filter((server) => ['stopped', 'exited'].includes(server.status)).length,
+      attention: state.servers.filter((server) => ['node-offline', 'offline', 'error', 'failed', 'unknown', 'missing'].includes(server.status)).length,
+    };
+    const filterCard = (filter, label, value, hint) => `
+      <button type="button" class="inventory-stat ${state.serverFilter === filter ? 'active' : ''}" data-server-filter="${filter}" aria-pressed="${state.serverFilter === filter}">
+        <span>${label}</span><strong>${value}</strong><small>${hint}</small>
+      </button>`;
+    const filtered = getFilteredServers();
+
     return `
       ${heading('INSTANCES', 'Servers', 'Manage Minecraft Java and Bedrock server instances.',
         adminAction('<button class="btn primary" data-action="new-server">＋ Create server</button>'))}
-      <section class="panel">
-        ${state.servers.length ? `
-          <div class="table-wrap"><table>
+      ${state.servers.length ? `
+        <section class="inventory-stats" aria-label="Server status filters">
+          ${filterCard('all', 'All servers', counts.all, 'Every instance')}
+          ${filterCard('running', 'Running', counts.running, 'Online workloads')}
+          ${filterCard('stopped', 'Stopped', counts.stopped, 'Paused instances')}
+          ${filterCard('attention', 'Needs attention', counts.attention, 'Offline or unhealthy')}
+        </section>
+        <section class="panel server-inventory">
+          <div class="server-toolbar">
+            <label class="server-search-label" for="server-search">Find a server</label>
+            <div class="server-search-wrap"><span aria-hidden="true">⌕</span><input id="server-search" type="search" value="${esc(state.serverSearch)}" placeholder="Name, software, node, port…" autocomplete="off"></div>
+            <label class="server-sort-label" for="server-sort">Sort</label>
+            <select id="server-sort" aria-label="Sort servers">
+              <option value="updated" ${state.serverSort === 'updated' ? 'selected' : ''}>Recently updated</option>
+              <option value="name-asc" ${state.serverSort === 'name-asc' ? 'selected' : ''}>Name A–Z</option>
+              <option value="name-desc" ${state.serverSort === 'name-desc' ? 'selected' : ''}>Name Z–A</option>
+              <option value="port" ${state.serverSort === 'port' ? 'selected' : ''}>Port low to high</option>
+            </select>
+            <button type="button" class="btn small favorite-filter ${state.serverFilter === 'favorites' ? 'active' : ''}" data-server-filter="favorites" aria-pressed="${state.serverFilter === 'favorites'}">★ Favorites <span id="favorite-count">${state.favoriteServers.length}</span></button>
+            <button type="button" class="btn small ghost" data-action="clear-server-filters">Reset</button>
+          </div>
+          <div class="inventory-results" id="server-results" role="status" aria-live="polite">Showing ${filtered.length} of ${state.servers.length} servers</div>
+          <div class="table-wrap" id="server-table-wrap" ${filtered.length ? '' : 'hidden'}><table>
             <thead><tr><th>Server</th><th>Software</th><th>Resources</th><th>Port</th><th>Status</th><th></th></tr></thead>
-            <tbody>${state.servers.map((server) => `
-              <tr>
-                <td><span class="server-name">${esc(server.name)}</span><span class="subline">${esc(server.id)}</span></td>
-                <td>${esc(state.eggs[server.egg_id]?.name || server.egg_id)}<span class="subline">${esc(server.version)}</span></td>
-                <td class="mono">${server.memory_mb} MB · ${server.cpu_cores} CPU</td>
-                <td class="mono">${server.port}</td>
-                <td>${statusBadge(server.status)}</td>
-                <td><button class="btn small" data-server="${esc(server.id)}">Manage →</button></td>
-              </tr>
-            `).join('')}</tbody>
+            <tbody id="server-table-body">${filtered.map((server) => serverInventoryRow(server)).join('')}</tbody>
           </table></div>
-        ` : emptyState('No server instances', state.user.role === 'admin' ? 'Register a node first, then create a server.' : 'There are no server instances assigned to you.', adminAction('<button class="btn primary" data-action="new-node">Register node</button>'))}
-      </section>`;
+          <div class="empty inventory-empty" id="server-empty-results" ${filtered.length ? 'hidden' : ''}>
+            <div class="inventory-empty-icon" aria-hidden="true">⌕</div>
+            <strong>No matching servers</strong>
+            <p>Try a different search or status filter, or reset the view to see every instance.</p>
+            <button type="button" class="btn" data-action="clear-server-filters">Clear filters</button>
+          </div>
+          <div class="inventory-footnote">Favorites are saved in this browser only.</div>
+        </section>
+      ` : emptyState('No server instances', state.user.role === 'admin' ? 'Register a node first, then create a server.' : 'There are no server instances assigned to you.', adminAction('<button class="btn primary" data-action="new-node">Register node</button>'))}`;
+  }
+
+  function getFilteredServers() {
+    const query = state.serverSearch.trim().toLocaleLowerCase();
+    const filtered = state.servers.filter((server) => {
+      const status = String(server.status || 'unknown').toLowerCase();
+      if (state.serverFilter === 'running' && status !== 'running') return false;
+      if (state.serverFilter === 'stopped' && !['stopped', 'exited'].includes(status)) return false;
+      if (state.serverFilter === 'attention' && !['node-offline', 'offline', 'error', 'failed', 'unknown', 'missing'].includes(status)) return false;
+      if (state.serverFilter === 'favorites' && !state.favoriteServers.includes(server.id)) return false;
+      if (!query) return true;
+
+      const node = state.nodes.find((item) => item.id === server.node_id);
+      const egg = state.eggs[server.egg_id];
+      const haystack = [server.name, server.id, egg?.name, server.egg_id, server.version, node?.name, node?.location, server.port, server.memory_mb, server.cpu_cores]
+        .filter((value) => value !== undefined && value !== null)
+        .join(' ')
+        .toLocaleLowerCase();
+      return haystack.includes(query);
+    });
+
+    filtered.sort((a, b) => {
+      if (state.serverSort === 'name-asc') return String(a.name).localeCompare(String(b.name));
+      if (state.serverSort === 'name-desc') return String(b.name).localeCompare(String(a.name));
+      if (state.serverSort === 'port') return Number(a.port) - Number(b.port);
+      const aDate = new Date(a.updated_at || a.created_at || 0).getTime() || 0;
+      const bDate = new Date(b.updated_at || b.created_at || 0).getTime() || 0;
+      return bDate - aDate;
+    });
+    return filtered;
+  }
+
+  function serverInventoryRow(server) {
+    const node = state.nodes.find((item) => item.id === server.node_id);
+    const egg = state.eggs[server.egg_id];
+    const favorite = state.favoriteServers.includes(server.id);
+    return `<tr>
+      <td><div class="inventory-name-cell"><button type="button" class="favorite-toggle ${favorite ? 'is-favorite' : ''}" data-server-favorite="${esc(server.id)}" aria-label="${favorite ? 'Remove' : 'Add'} ${esc(server.name)} ${favorite ? 'from' : 'to'} favorites" aria-pressed="${favorite}">${favorite ? '★' : '☆'}</button><span><span class="server-name">${esc(server.name)}</span><span class="subline">${esc(server.id.slice(0, 8))} · ${esc(node?.name || 'Node')}</span></span></div></td>
+      <td>${esc(egg?.name || server.egg_id)}<span class="subline">${esc(server.version)}</span></td>
+      <td class="mono">${esc(server.memory_mb)} MB · ${esc(server.cpu_cores)} CPU</td>
+      <td class="mono">${esc(server.port)}</td>
+      <td>${statusBadge(server.status)}</td>
+      <td><button class="btn small" data-server="${esc(server.id)}">Manage →</button></td>
+    </tr>`;
+  }
+
+  function syncServerInventory() {
+    const body = document.querySelector('#server-table-body');
+    if (!body) return;
+    const filtered = getFilteredServers();
+    body.innerHTML = filtered.map((server) => serverInventoryRow(server)).join('');
+    const tableWrap = document.querySelector('#server-table-wrap');
+    const empty = document.querySelector('#server-empty-results');
+    if (tableWrap) tableWrap.hidden = filtered.length === 0;
+    if (empty) empty.hidden = filtered.length !== 0;
+    const results = document.querySelector('#server-results');
+    if (results) results.textContent = `Showing ${filtered.length} of ${state.servers.length} servers`;
+    const favoriteCount = document.querySelector('#favorite-count');
+    if (favoriteCount) favoriteCount.textContent = String(state.favoriteServers.length);
+    document.querySelectorAll('[data-server-filter]').forEach((button) => {
+      const active = button.dataset.serverFilter === state.serverFilter;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
+
+  function toggleServerFavorite(id) {
+    state.favoriteServers = state.favoriteServers.includes(id)
+      ? state.favoriteServers.filter((item) => item !== id)
+      : [...state.favoriteServers, id];
+    if (!saveServerFavorites()) {
+      toast('Favorite saved for this session, but browser storage is unavailable.', true);
+    }
+    syncServerInventory();
+    if (state.view !== 'servers') render();
   }
 
   function renderNodes() {
@@ -666,10 +811,9 @@
       </section>`;
   }
 
-  async function downloadFile(filePath) {
-    const query = new URLSearchParams({ path: filePath });
-    const result = await api(`/servers/${state.serverId}/download?${query}`);
-    const binary = atob(result.contentBase64);
+  function saveBase64Download(name, contentBase64) {
+    if (typeof contentBase64 !== 'string') throw new Error('The node returned an invalid download.');
+    const binary = atob(contentBase64);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
       bytes[index] = binary.charCodeAt(index);
@@ -677,18 +821,29 @@
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = result.name || filePath.split('/').pop();
+    anchor.download = name;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  async function downloadFile(filePath) {
+    const query = new URLSearchParams({ path: filePath });
+    const result = await api(`/servers/${state.serverId}/download?${query}`);
+    saveBase64Download(result.name || filePath.split('/').pop(), result.contentBase64);
+  }
+
+  async function downloadBackup(name) {
+    const result = await api(`/servers/${state.serverId}/backups/${encodeURIComponent(name)}/download`);
+    saveBase64Download(result.name || name, result.contentBase64);
+  }
+
   function renameFileModal(filePath) {
     const name = filePath.split('/').pop();
     fileModal('Rename file or folder', 'rename-file-form', 'rename-file', `
       <label class="field-label">Current path<input name="path" value="${esc(filePath)}" readonly></label>
-      <label class="field-label">New name<input name="name" value="${esc(name)}" maxlength="120" pattern="[a-zA-Z0-9_ .()\\-]+" required></label>
+      <label class="field-label">New name<input name="name" value="${esc(name)}" maxlength="120" pattern="[a-zA-Z0-9_ ()-][a-zA-Z0-9_ .()-]{0,119}" required><small class="help">Hidden names beginning with a dot are not allowed.</small></label>
     `, 'Rename');
   }
   function renderBackups() {
@@ -703,7 +858,7 @@
           <div class="file-row">
             <span class="server-name">${esc(backup.name)}<span class="subline">${esc(dateText(backup.createdAt))}</span></span>
             <span class="mono muted">${formatBytes(backup.size)}</span>
-            <div class="file-actions">${state.server?.canOperate ? `<button class="btn small danger" data-backup-restore="${esc(backup.name)}">Restore</button>` : ''}</div>
+            <div class="file-actions"><button class="btn small" data-backup-download="${esc(backup.name)}">Download</button>${state.server?.canOperate ? `<button class="btn small danger" data-backup-restore="${esc(backup.name)}">Restore</button>` : ''}</div>
           </div>
         `).join('') : emptyState('No backups yet', 'Create a restore point before installing plugins or changing server configuration.')}
       </section>
@@ -771,7 +926,7 @@
     state.tab = tab;
     if (tab === 'files') {
       try {
-        const result = await api(`/servers/${state.serverId}/files`);
+        const result = await api(`/servers/${state.serverId}/files?${new URLSearchParams({ path: state.filePath })}`);
         state.files = result.files || [];
       } catch (error) {
         toast(error.message, true);
@@ -828,8 +983,8 @@
     `, `<button class="btn" data-action="close-modal">Close</button><button class="btn primary" type="submit" form="share-user-form">Save access</button>`);
   }
   async function newServerModal() {
-    if (!state.nodes.length) {
-      toast('Register and connect a node before creating a server.', true);
+    if (!state.nodes.some((node) => node.online)) {
+      toast(state.nodes.length ? 'No connected node is available. Test or reconnect a node before creating a server.' : 'Register and connect a node before creating a server.', true);
       state.view = 'nodes';
       render();
       return;
@@ -962,9 +1117,9 @@ AGENT_PORT=8080</pre>
       }
 
       if (type === 'new-file') {
-        await api(`/servers/${state.serverId}/file`, {
-          method: 'PUT',
-          body: { path: [state.filePath, values.name].filter(Boolean).join('/'), content: values.content || '' },
+        await api(`/servers/${state.serverId}/files`, {
+          method: 'POST',
+          body: { action: 'create', path: [state.filePath, values.name].filter(Boolean).join('/'), content: values.content || '' },
         });
         closeModal();
         toast('File created.');
@@ -1059,6 +1214,17 @@ AGENT_PORT=8080</pre>
         toast('Panel data refreshed.');
         return;
       }
+      if (action === 'clear-server-filters') {
+        state.serverSearch = '';
+        state.serverFilter = 'all';
+        state.serverSort = 'updated';
+        const search = document.querySelector('#server-search');
+        const sort = document.querySelector('#server-sort');
+        if (search) search.value = '';
+        if (sort) sort.value = 'updated';
+        syncServerInventory();
+        return;
+      }
       if (action === 'reload') {
         location.reload();
         return;
@@ -1078,12 +1244,12 @@ AGENT_PORT=8080</pre>
       }
       if (action === 'new-folder') {
         fileModal('Create folder', 'new-folder-form', 'new-folder',
-          '<label class="field-label">Folder name<input name="name" required maxlength="80" pattern="[a-zA-Z0-9_. -]+"></label>', 'Create folder');
+          '<label class="field-label">Folder name<input name="name" required maxlength="80" pattern="[a-zA-Z0-9_ ][a-zA-Z0-9_. -]{0,79}"><small class="help">Hidden names beginning with a dot are not allowed.</small></label>', 'Create folder');
         return;
       }
       if (action === 'new-file') {
         fileModal('Create text file', 'new-file-form', 'new-file',
-          '<label class="field-label">File name<input name="name" required maxlength="100" pattern="[a-zA-Z0-9_. -]+"></label><label class="field-label">Initial contents<textarea class="field" name="content" spellcheck="false"></textarea></label>', 'Create file');
+          '<label class="field-label">File name<input name="name" required maxlength="100" pattern="[a-zA-Z0-9_ ][a-zA-Z0-9_. -]{0,99}"><small class="help">Hidden names beginning with a dot are not allowed.</small></label><label class="field-label">Initial contents<textarea class="field" name="content" spellcheck="false"></textarea></label>', 'Create file');
         return;
       }
       if (action === 'file-up') {
@@ -1159,6 +1325,19 @@ AGENT_PORT=8080</pre>
   }
 
   async function handleClick(event) {
+    const serverFilterButton = event.target.closest('[data-server-filter]');
+    if (serverFilterButton) {
+      state.serverFilter = serverFilterButton.dataset.serverFilter;
+      syncServerInventory();
+      return;
+    }
+
+    const favoriteButton = event.target.closest('[data-server-favorite]');
+    if (favoriteButton) {
+      toggleServerFavorite(favoriteButton.dataset.serverFavorite);
+      return;
+    }
+
     const viewButton = event.target.closest('[data-view]');
     if (viewButton) {
       state.view = viewButton.dataset.view;
@@ -1231,6 +1410,19 @@ AGENT_PORT=8080</pre>
     const fileDeleteButton = event.target.closest('[data-file-delete]');
     if (fileDeleteButton) {
       confirmModal('Delete file or folder?', `This permanently deletes ${fileDeleteButton.dataset.fileDelete} from the server directory.`, 'delete-file', { path: fileDeleteButton.dataset.fileDelete });
+      return;
+    }
+
+    const backupDownloadButton = event.target.closest('[data-backup-download]');
+    if (backupDownloadButton) {
+      try {
+        backupDownloadButton.disabled = true;
+        await downloadBackup(backupDownloadButton.dataset.backupDownload);
+      } catch (error) {
+        toast(error.message, true);
+      } finally {
+        backupDownloadButton.disabled = false;
+      }
       return;
     }
 
@@ -1333,6 +1525,11 @@ AGENT_PORT=8080</pre>
   async function handleUpload(event) {
     if (event.target.id !== 'file-upload' || !event.target.files?.length) return;
     const file = event.target.files[0];
+    if (file.name.startsWith('.')) {
+      toast('Hidden files cannot be uploaded.', true);
+      event.target.value = '';
+      return;
+    }
     if (file.size > 64 * 1024 * 1024) {
       toast('Upload limit is 64 MB.', true);
       event.target.value = '';
@@ -1366,7 +1563,17 @@ AGENT_PORT=8080</pre>
     handleConsoleSubmit(event).catch((error) => toast(error.message, true));
   });
   document.addEventListener('change', (event) => {
+    if (event.target.id === 'server-sort') {
+      state.serverSort = event.target.value;
+      syncServerInventory();
+    }
     handleUpload(event).catch((error) => toast(error.message, true));
+  });
+  document.addEventListener('input', (event) => {
+    if (event.target.id === 'server-search') {
+      state.serverSearch = event.target.value;
+      syncServerInventory();
+    }
   });
 
   boot();

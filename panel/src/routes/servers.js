@@ -54,10 +54,14 @@ function createServersRouter(db) {
     const servers = await Promise.all(allowed.map(async (server) => {
       try {
         const live = await agentRequest(db, server.node_id, `/api/servers/${server.id}`, { timeout: 5000 });
-        db.prepare('UPDATE servers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(live.status, server.id);
+        if (live.status !== server.status) {
+          db.prepare('UPDATE servers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(live.status, server.id);
+          server.updated_at = db.prepare('SELECT updated_at FROM servers WHERE id = ?').get(server.id)?.updated_at || server.updated_at;
+        }
         return visibleServer(db, { ...server, status: live.status }, req.session.user);
       } catch (error) {
-        return visibleServer(db, { ...server, status: 'node-offline', agentError: error.message }, req.session.user);
+        const status = error.status === 404 ? 'missing' : 'node-offline';
+        return visibleServer(db, { ...server, status, agentError: error.message }, req.session.user);
       }
     }));
 
@@ -253,7 +257,7 @@ function createServersRouter(db) {
     if (!server) return res.status(404).json({ error: 'Server not found.' });
     if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
     const query = new URLSearchParams({ path: String(req.query.path || '') });
-    res.json(await agentRequest(db, server.node_id, `/api/servers/${server.id}/download?${query}`));
+    res.json(await agentRequest(db, server.node_id, `/api/servers/${server.id}/download?${query}`, { timeout: 90000 }));
   }));
   router.get('/:id/file', asyncRoute(async (req, res) => {
     const server = getServer(db, req.params.id);
@@ -280,7 +284,7 @@ function createServersRouter(db) {
     res.json(await agentRequest(db, server.node_id, `/api/servers/${server.id}/files`, {
       method: 'POST',
       body: req.body,
-      timeout: 60000,
+      timeout: 120000,
     }));
   }));
 
@@ -332,7 +336,7 @@ function createServersRouter(db) {
     if (!server) return res.status(404).json({ error: 'Server not found.' });
     if (!canAccess(db, server, req.session.user)) return res.status(403).json({ error: 'You do not have access to this server.' });
     const name = String(req.params.name || '');
-    if (!/^[a-zA-Z0-9_.-]+\\.tar\\.gz$/.test(name)) return res.status(400).json({ error: 'Invalid backup name.' });
+    if (!/^[a-zA-Z0-9_.-]+\.tar\.gz$/.test(name)) return res.status(400).json({ error: 'Invalid backup name.' });
     const result = await agentRequest(db, server.node_id, `/api/servers/${server.id}/backups/${encodeURIComponent(name)}/download`, { timeout: 90000 });
     res.json(result);
   }));
