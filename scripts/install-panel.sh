@@ -36,7 +36,7 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 log "Installing system dependencies."
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl git openssl python3 make g++ build-essential
+apt-get install -y --no-install-recommends ca-certificates curl git openssl gnupg python3 make g++ build-essential
 
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
 if [[ "$NODE_MAJOR" != "22" ]]; then
