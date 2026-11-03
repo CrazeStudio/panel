@@ -249,33 +249,115 @@
   function renderOverview() {
     const admin = state.user.role === 'admin';
     const online = state.servers.filter((server) => server.status === 'running').length;
-    const offline = state.servers.filter((server) => server.status === 'node-offline').length;
-    const cards = [
-      ['SERVER INSTANCES', state.servers.length, 'Registered workloads'],
-      ['RUNNING', online, 'Live container state'],
-      ['STOPPED / OTHER', state.servers.length - online - offline, 'Not currently running'],
-      ['NODES OFFLINE', offline, 'Servers with unreachable agent'],
-    ];
+    const stopped = state.servers.filter((server) => ['stopped', 'exited'].includes(server.status)).length;
+    const offlineNodes = admin ? state.nodes.filter((node) => !node.online).length : 0;
+    const onlineNodes = admin ? state.nodes.filter((node) => node.online).length : 0;
+    const recentServers = state.servers.slice(0, 6);
+    const uptimeLabel = state.servers.length ? 'Live state from node agents' : 'No workloads provisioned yet';
 
     return `
-      ${heading('OPERATIONS', 'Overview', 'Your game infrastructure, with status reported by connected node agents.',
-        adminAction('<button class="btn primary" data-action="new-server">＋ Create server</button>'))}
-      <section class="stats-grid">${cards.map(([label, value, note]) => `
-        <article class="stat-card"><small>${label}</small><div class="stat-value">${value}</div><div class="stat-foot">${note}</div></article>
-      `).join('')}</section>
-      <div class="section-head"><div><h2>Server instances</h2><p>Latest status from each connected node.</p></div><button class="btn small" data-view="servers">All servers →</button></div>
-      <section class="panel">
-        ${state.servers.length ? `
-          <div class="table-wrap"><table>
-            <thead><tr><th>Server</th><th>Software</th><th>Node</th><th>Address</th><th>Status</th><th></th></tr></thead>
-            <tbody>${state.servers.slice(0, 8).map((server) => serverRow(server)).join('')}</tbody>
-          </table></div>
-        ` : emptyState('No servers yet', admin ? 'Add a node, then provision your first Minecraft server.' : 'No servers have been assigned to your account.', admin ? '<button class="btn primary" data-action="new-node">Add a node</button>' : '')}
+      <div class="dashboard-welcome">
+        <div>
+          <div class="kicker">CRAZEPANEL / CONTROL CENTER</div>
+          <h1>Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}, ${esc(state.user.username)}.</h1>
+          <p>Here is the current status of your Minecraft infrastructure.</p>
+        </div>
+        <div class="dashboard-actions">
+          ${admin ? '<button class="btn" data-action="new-node">＋ Add node</button><button class="btn primary" data-action="new-server">＋ Create server</button>' : '<button class="btn" data-view="servers">View my servers</button>'}
+        </div>
+      </div>
+
+      <section class="dashboard-metrics">
+        <article class="metric-card metric-primary">
+          <div class="metric-top"><span>SERVER INSTANCES</span><span class="metric-icon">▣</span></div>
+          <strong>${state.servers.length}</strong>
+          <small>${uptimeLabel}</small>
+        </article>
+        <article class="metric-card">
+          <div class="metric-top"><span>RUNNING SERVERS</span><span class="metric-icon">◉</span></div>
+          <strong>${online}</strong>
+          <small>${state.servers.length ? `${Math.round(online / state.servers.length * 100)}% of your instances` : 'Waiting for first server'}</small>
+        </article>
+        <article class="metric-card">
+          <div class="metric-top"><span>STOPPED / OTHER</span><span class="metric-icon">Ⅱ</span></div>
+          <strong>${stopped}</strong>
+          <small>Not currently running</small>
+        </article>
+        ${admin ? `
+          <article class="metric-card">
+            <div class="metric-top"><span>NODES ONLINE</span><span class="metric-icon">⌘</span></div>
+            <strong>${onlineNodes}<span class="metric-total"> / ${state.nodes.length}</span></strong>
+            <small>${offlineNodes ? `${offlineNodes} node(s) need attention` : 'All registered nodes reachable'}</small>
+          </article>
+        ` : ''}
       </section>
-      ${admin ? `
-        <div class="section-head"><div><h2>Nodes</h2><p>Hosts connected to CrazePanel.</p></div><button class="btn small" data-view="nodes">Manage nodes →</button></div>
-        <section class="node-grid">${state.nodes.slice(0, 4).map((node) => nodeCard(node)).join('') || emptyState('No nodes registered', 'Install a node agent and connect it to this panel.', '<button class="btn primary" data-action="new-node">Register node</button>')}</section>
-      ` : ''}
+
+      <div class="dashboard-grid">
+        <section class="dashboard-main-column">
+          <div class="dashboard-section-heading">
+            <div><span class="kicker">YOUR INFRASTRUCTURE</span><h2>Server instances</h2><p>Monitor and manage your Minecraft servers.</p></div>
+            <button class="btn small" data-view="servers">View all <span aria-hidden="true">→</span></button>
+          </div>
+          <section class="dashboard-server-list">
+            ${recentServers.length ? recentServers.map((server) => {
+              const egg = state.eggs[server.egg_id];
+              const node = state.nodes.find((item) => item.id === server.node_id);
+              return `
+                <article class="dashboard-server-row">
+                  <div class="dashboard-server-symbol">▣</div>
+                  <div class="dashboard-server-info">
+                    <strong>${esc(server.name)}</strong>
+                    <small>${esc(egg?.name || server.egg_id)} · ${esc(server.version)} · ${esc(node?.name || 'Node')}</small>
+                  </div>
+                  <div class="dashboard-server-port"><small>PORT</small><strong>${esc(server.port)}</strong></div>
+                  <div class="dashboard-server-status">${statusBadge(server.status)}</div>
+                  <button class="btn small" data-server="${esc(server.id)}">Open <span aria-hidden="true">↗</span></button>
+                </article>`;
+            }).join('') : emptyState('No servers yet', admin ? 'Register a node and create your first Minecraft server.' : 'No server instances have been assigned to your account.', admin ? '<button class="btn primary" data-action="new-server">Create server</button>' : '')}
+          </section>
+
+          ${admin ? `
+            <div class="dashboard-section-heading dashboard-node-heading">
+              <div><span class="kicker">HOST INFRASTRUCTURE</span><h2>Node health</h2><p>Connection state of your registered machines.</p></div>
+              <button class="btn small" data-view="nodes">Manage nodes <span aria-hidden="true">→</span></button>
+            </div>
+            <section class="dashboard-node-list">
+              ${state.nodes.length ? state.nodes.slice(0, 4).map((node) => `
+                <article class="dashboard-node-row">
+                  <span class="node-health-indicator ${node.online ? 'is-online' : 'is-offline'}"></span>
+                  <div class="dashboard-node-info"><strong>${esc(node.name)}</strong><small>${esc(node.location || node.url)}</small></div>
+                  <div class="dashboard-node-version">${node.docker ? `Docker ${esc(node.docker.version)}` : 'Agent unavailable'}</div>
+                  ${statusBadge(node.online ? 'online' : 'offline')}
+                </article>
+              `).join('') : emptyState('No nodes registered', 'Register a Linux host running the CrazePanel agent.', '<button class="btn primary" data-action="new-node">Register node</button>')}
+            </section>
+          ` : ''}
+        </section>
+
+        <aside class="dashboard-side-column">
+          <section class="dashboard-side-panel">
+            <div class="dashboard-section-heading compact"><div><span class="kicker">SHORTCUTS</span><h2>Quick actions</h2></div></div>
+            <div class="quick-action-list">
+              ${admin ? `
+                <button data-action="new-server"><span class="quick-action-icon">＋</span><span><strong>Create a server</strong><small>Deploy a Minecraft instance</small></span><span class="quick-arrow">↗</span></button>
+                <button data-action="new-node"><span class="quick-action-icon">⌘</span><span><strong>Register a node</strong><small>Connect another host machine</small></span><span class="quick-arrow">↗</span></button>
+                <button data-view="admin"><span class="quick-action-icon">♙</span><span><strong>Manage users</strong><small>Roles and access permissions</small></span><span class="quick-arrow">↗</span></button>
+                <button data-view="activity"><span class="quick-action-icon">↗</span><span><strong>Activity log</strong><small>Review panel actions</small></span><span class="quick-arrow">↗</span></button>
+              ` : `
+                <button data-view="servers"><span class="quick-action-icon">▣</span><span><strong>Open my servers</strong><small>Manage assigned instances</small></span><span class="quick-arrow">↗</span></button>
+                <button data-view="account"><span class="quick-action-icon">◉</span><span><strong>Account settings</strong><small>Update account security</small></span><span class="quick-arrow">↗</span></button>
+              `}
+            </div>
+          </section>
+          <section class="dashboard-side-panel dashboard-system-panel">
+            <div class="dashboard-section-heading compact"><div><span class="kicker">PANEL STATUS</span><h2>System overview</h2></div><span class="system-status-dot"></span></div>
+            <div class="system-overview-row"><span>Panel session</span><strong>Active</strong></div>
+            <div class="system-overview-row"><span>Connected nodes</span><strong>${admin ? `${onlineNodes} / ${state.nodes.length}` : 'Managed by admin'}</strong></div>
+            <div class="system-overview-row"><span>Server workloads</span><strong>${state.servers.length}</strong></div>
+            <p class="dashboard-disclaimer">Metrics are based on the latest successful node-agent responses. Detailed CPU, memory and network usage is available inside each server workspace.</p>
+          </section>
+        </aside>
+      </div>
     `;
   }
 
